@@ -7,8 +7,10 @@ class RoomData {
   final String imagePath;
   final IconData icon;
   final List<int> connectedRoomIds;
-  // NEW: description
+
   final String description;
+
+  final int presetId;
 
   const RoomData({
     required this.id,
@@ -17,6 +19,7 @@ class RoomData {
     required this.icon,
     required this.connectedRoomIds,
     this.description = '',
+    this.presetId = -1,
   });
 }
 
@@ -97,7 +100,8 @@ class PanoramaData extends ChangeNotifier {
         imagePath: image,
         icon: icon,
         connectedRoomIds: conns,
-        description: r.description, // NEW
+        description: r.description,
+        presetId: r.presetId,
       ));
     }
 
@@ -150,14 +154,15 @@ class PanoramaData extends ChangeNotifier {
             v
                 .map((r) => {
                       'id': r.id,
-                      'name': r.name,
                       'imagePath': r.imagePath,
+                      'name': r.name,
                       'icon': {
                         'codePoint': r.icon.codePoint,
                         'fontFamily': r.icon.fontFamily,
                       },
                       'connectedRoomIds': r.connectedRoomIds,
-                      'description': r.description, // NEW
+                      'description': r.description,
+                      'presetId': r.presetId,
                     })
                 .toList())),
         'floorHotspots': floorHotspots.map((k, v) => MapEntry(

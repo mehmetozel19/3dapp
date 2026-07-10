@@ -1,40 +1,59 @@
 import 'package:flutter/material.dart';
+import 'presets.dart';
 
 const double kControlHeight = 40.0;
 const double kControlFontSize = 14.0;
 
-const Map<String, IconData> kIconCatalog = {
-  'door_front_door': Icons.door_front_door,
-  'apartment': Icons.apartment,
-  'account_balance': Icons.account_balance,
-  'east': Icons.east,
-  'west': Icons.west,
-  'north': Icons.north,
-  'south': Icons.south,
-  'work': Icons.work,
-  'meeting_room': Icons.meeting_room,
-  'storage': Icons.storage,
-  'kitchen': Icons.kitchen,
-  'dining': Icons.dining,
-  'chair': Icons.chair,
-  'library_books': Icons.library_books,
-  'roofing': Icons.roofing,
-  'stairs': Icons.stairs,
-  'settings': Icons.settings,
-  'deck': Icons.deck,
-  'grass': Icons.grass,
-  'person': Icons.person,
-  'coffee': Icons.coffee,
-  'print': Icons.print,
-  'groups': Icons.groups,
-  'hotel': Icons.hotel,
-  'single_bed': Icons.single_bed,
-  'bathroom': Icons.bathroom,
-  'bathtub': Icons.bathtub,
+String _slugify(String label) {
+  final t = label.trim().toLowerCase();
+  final buf = StringBuffer();
+  for (final ch in t.runes) {
+    final c = String.fromCharCode(ch);
+    if (RegExp(r'[a-z0-9]').hasMatch(c)) {
+      buf.write(c);
+    } else {
+      buf.write('_');
+    }
+  }
+
+  final s = buf.toString().replaceAll(RegExp(r'_+'), '_');
+  return s.replaceAll(RegExp(r'^_+|_+$'), '');
+}
+
+const Map<String, IconData> _kBaseIcons = {
+  'circle_outlined': Icons.circle_outlined,
   'arrow_forward': Icons.arrow_forward,
   'arrow_back': Icons.arrow_back,
-  'circle_outlined': Icons.circle_outlined,
+  'north': Icons.north,
+  'south': Icons.south,
+  'east': Icons.east,
+  'west': Icons.west,
 };
+
+Map<String, IconData> _buildIconCatalog() {
+  final map = <String, IconData>{};
+
+  map.addAll(_kBaseIcons);
+
+  for (final p in kRoomPresetCatalog) {
+    final key = _slugify(p.label);
+
+    map.putIfAbsent(key, () => p.icon);
+  }
+
+  map.putIfAbsent('kitchen', () => Icons.kitchen);
+  map.putIfAbsent('bathroom', () => Icons.bathroom);
+  map.putIfAbsent('bedroom', () => Icons.hotel);
+  map.putIfAbsent('storage', () => Icons.storage);
+  map.putIfAbsent('stairs', () => Icons.stairs);
+  map.putIfAbsent('deck', () => Icons.deck);
+  map.putIfAbsent('door_front_door', () => Icons.door_front_door);
+  map.putIfAbsent('countertops', () => Icons.countertops);
+
+  return Map.unmodifiable(map);
+}
+
+final Map<String, IconData> kIconCatalog = _buildIconCatalog();
 
 class FloorEditor {
   List<EditableRoom> rooms = [];
@@ -46,6 +65,8 @@ class EditableRoom {
   String imagePath;
   String iconName;
   String description;
+  int presetId;
+  bool isBatchUpload;
 
   List<int> connectedRoomIds;
 
@@ -58,6 +79,8 @@ class EditableRoom {
     this.imagePath = '',
     this.iconName = 'circle_outlined',
     this.description = '',
+    this.presetId = -1,
+    this.isBatchUpload = false,
     List<int>? connectedRoomIds,
   })  : connectedRoomIds = connectedRoomIds ?? [],
         _nameCtrl = TextEditingController(text: name),

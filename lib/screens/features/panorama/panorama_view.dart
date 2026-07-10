@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import '../../../models/houses_store.dart';
@@ -8,7 +10,7 @@ import '../../../features/panorama/components/timeline.dart';
 import '../../../features/panorama/components/compass_navigator.dart';
 import '../../../features/panorama/theme/ui_styles.dart';
 import '../../../models/panorama_data.dart';
-import 'dart:io';
+
 class PanoramaViewScreen extends StatefulWidget {
   final PanoramaData? initialHouse;
   final String title;
@@ -63,13 +65,10 @@ class _PanoramaViewScreenState extends State<PanoramaViewScreen>
 
   late final PanoramaData _store;
 
-  // NEW: room description panel state
   bool _roomInfoExpanded = true;
 
-  // NEW: suppress room info box until next pano fully loads
   bool _hideInfoBox = false;
 
-  // Helper to get current room description
   String get _currentRoomDescription {
     final rooms = _currentRooms;
     if (_currentPanoId < 0 || _currentPanoId >= rooms.length) return '';
@@ -149,7 +148,9 @@ class _PanoramaViewScreenState extends State<PanoramaViewScreen>
   }
 
   List<Image> get _currentPanoImages {
-    return _currentRooms.map((room) => Image.file(File(room.imagePath))).toList();
+    return _currentRooms
+        .map((room) => Image.file(File(room.imagePath)))
+        .toList();
   }
 
   List<PanoHotspot> get _currentHotspots {
@@ -302,12 +303,10 @@ class _PanoramaViewScreenState extends State<PanoramaViewScreen>
         _currentTimelineIndex = panoId.clamp(0, 9);
         _lastRoomByFloor[_currentFloor] = panoId;
 
-        // Re-show info box for new room if it has description
         if (_hideInfoBox && _currentRoomDescription.trim().isNotEmpty) {
           _hideInfoBox = false;
-          _roomInfoExpanded = true; // auto expand
+          _roomInfoExpanded = true;
         } else if (_hideInfoBox && _currentRoomDescription.trim().isEmpty) {
-          // keep hidden until a described room
           _hideInfoBox = true;
         }
       });
@@ -411,7 +410,6 @@ class _PanoramaViewScreenState extends State<PanoramaViewScreen>
       "Hotspot clicked: ${hotspot.text} from pano ${hotspot.panoId} to pano ${hotspot.targetPanoId} (targetFloor=${hotspot.targetFloorId})",
     );
 
-    // Hide current room info immediately
     if (!_hideInfoBox) {
       setState(() {
         _hideInfoBox = true;
@@ -537,7 +535,7 @@ class _PanoramaViewScreenState extends State<PanoramaViewScreen>
   @override
   Widget build(BuildContext context) {
     double bottomPadding = 60.0;
-    // Keep these in sync with CompassNavigator
+
     const double _compassBottom = 140.0;
     const double _compassHeight = 86.0;
     final double _infoBottom = _compassBottom + _compassHeight + 8.0;
@@ -647,7 +645,6 @@ class _PanoramaViewScreenState extends State<PanoramaViewScreen>
             bottom: _compassBottom,
             child: Center(
               child: AnimatedOpacity(
-                // ...existing compass opacity...
                 opacity: _isCompassFaded
                     ? (_showTimelineScroller ? 0.25 : 0.0)
                     : (_showTimelineScroller ? 1.0 : 0.0),
@@ -833,7 +830,6 @@ class _PanoramaViewScreenState extends State<PanoramaViewScreen>
               ),
             ),
           ),
-          // Glassy room info overlay (50% screen width), above compass
           Positioned(
             left: 20,
             right: 20,
@@ -852,7 +848,7 @@ class _PanoramaViewScreenState extends State<PanoramaViewScreen>
                     _currentRoomDescription.trim().isEmpty,
                 child: Center(
                   child: FractionallySizedBox(
-                    widthFactor: 0.5, // 50% of the screen width
+                    widthFactor: 0.5,
                     child: _RoomInfoBox(
                       expanded: _roomInfoExpanded,
                       title: _currentRooms
@@ -877,7 +873,6 @@ class _PanoramaViewScreenState extends State<PanoramaViewScreen>
   }
 }
 
-// NEW: lightweight info box widget
 class _RoomInfoBox extends StatelessWidget {
   final bool expanded;
   final String title;
@@ -901,7 +896,6 @@ class _RoomInfoBox extends StatelessWidget {
         filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
         child: Container(
           decoration: BoxDecoration(
-            // Glassy design matching hotspot/control glass
             gradient: const LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -926,18 +920,21 @@ class _RoomInfoBox extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Header with toggle
               InkWell(
                 onTap: onToggle,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   child: Row(
                     children: [
-                      const Icon(Icons.info_outline, size: 18, color: Colors.white),
+                      const Icon(Icons.info_outline,
+                          size: 18, color: Colors.white),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          hasTitle ? 'About ${title.trim()}' : 'Room information',
+                          hasTitle
+                              ? 'About ${title.trim()}'
+                              : 'Room information',
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w700,
@@ -954,7 +951,6 @@ class _RoomInfoBox extends StatelessWidget {
                   ),
                 ),
               ),
-              // Body
               AnimatedCrossFade(
                 firstChild: const SizedBox.shrink(),
                 secondChild: Container(
@@ -970,8 +966,9 @@ class _RoomInfoBox extends StatelessWidget {
                     textAlign: TextAlign.left,
                   ),
                 ),
-                crossFadeState:
-                    expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+                crossFadeState: expanded
+                    ? CrossFadeState.showSecond
+                    : CrossFadeState.showFirst,
                 duration: const Duration(milliseconds: 180),
               ),
             ],

@@ -33,6 +33,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void _handleGoogleLogin() async {
     setState(() => _isLoading = true);
     var user = await _authService.signInWithGoogle();
+    // var user = null; // Placeholder for testing without Firebase
     setState(() => _isLoading = false);
 
     if (user != null) {

@@ -12,11 +12,11 @@ class HousePanoramaCoreScreen extends StatefulWidget {
   const HousePanoramaCoreScreen({super.key});
 
   @override
-  State<HousePanoramaCoreScreen> createState() => _HousePanoramaCoreScreenState();
+  State<HousePanoramaCoreScreen> createState() =>
+      _HousePanoramaCoreScreenState();
 }
 
 class _HousePanoramaCoreScreenState extends State<HousePanoramaCoreScreen> {
-
   @override
   Widget build(BuildContext context) {
     final housesStore = HousesStore.instance;
@@ -36,7 +36,8 @@ class _HousePanoramaCoreScreenState extends State<HousePanoramaCoreScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         IconButton(
-                          icon: Icon(Icons.arrow_back, color: Colors.grey.shade700),
+                          icon: Icon(Icons.arrow_back,
+                              color: Colors.grey.shade700),
                           onPressed: () {
                             Navigator.of(context).pop();
                           },
@@ -143,17 +144,11 @@ class SavedHouseCard extends StatelessWidget {
                   color: AppStyles.border, width: AppStyles.borderWidth),
               color: AppStyles.surfaceMuted,
             ),
-            child: isAsset
-                ? Image.asset(
-                    thumbPath,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _placeholderThumb(),
-                  )
-                : Image.file(
-                    File(thumbPath),
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => _placeholderThumb(),
-                  ),
+            child: Image.file(
+              File(thumbPath),
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _placeholderThumb(),
+            ),
           ),
         );
 
@@ -297,8 +292,9 @@ class SavedHouseCard extends StatelessWidget {
           'rooms': rooms
               .map((r) => {
                     'id': r.id,
-                    'name': r.name,
+                    'presetId': r.presetId,
                     'imagePath': r.imagePath,
+                    'name': r.name,
                     'icon': {
                       'codePoint': r.icon.codePoint,
                       'fontFamily': r.icon.fontFamily,

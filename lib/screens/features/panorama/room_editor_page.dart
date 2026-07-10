@@ -6,55 +6,12 @@ import '../../../features/panorama/components/pano_hotspot_picker.dart';
 import '../../../features/panorama/theme/ui_styles.dart';
 import '../../../models/editor_models.dart';
 import '../../../models/panorama_data.dart';
+import '../../../models/presets.dart';
 import 'dart:convert' as convert;
 import 'dart:math' as math;
 
 const double kControlHeight = 40.0;
-const double kControlFontSize = 14.0;
-
-// --- PRESETS: common rooms and sections (label + icon key from kIconCatalog) ---
-class RoomPreset {
-  final String label;
-  final String iconKey;
-  const RoomPreset(this.label, this.iconKey);
-}
-
-const List<RoomPreset> kRoomPresets = [
-  // Common rooms
-  RoomPreset('Living room', 'living_room'),
-  RoomPreset('Kitchen', 'kitchen'),
-  RoomPreset('Dining room', 'dining'),
-  RoomPreset('Bedroom', 'hotel'),
-  RoomPreset('Master bedroom', 'bedroom_parent'),
-  RoomPreset('Guest room', 'hotel'),
-  RoomPreset('Bathroom', 'bathroom'),
-  RoomPreset('Toilet', 'wc'),
-  RoomPreset('Shower', 'shower'),
-  RoomPreset('Hallway', 'hallway'),
-  RoomPreset('Office / Study', 'work'),
-  RoomPreset('Garage', 'garage'),
-  RoomPreset('Laundry', 'laundry'),
-  RoomPreset('Stairs', 'stairs'),
-  RoomPreset('Balcony', 'balcony'),
-  RoomPreset('Patio / Terrace', 'deck'),
-  RoomPreset('Entry / Foyer', 'door_front'),
-  RoomPreset('Closet', 'wardrobe'),
-  RoomPreset('Pantry', 'pantry'),
-  RoomPreset('Storage', 'inventory_2'),
-  RoomPreset('Playroom', 'toys'),
-  RoomPreset('Gym', 'fitness_center'),
-
-  // Sections of rooms
-  RoomPreset('Living – Seating', 'weekend'),
-  RoomPreset('Living – TV area', 'tv'),
-  RoomPreset('Kitchen – Island', 'countertops'),
-  RoomPreset('Kitchen – Pantry', 'pantry'),
-  RoomPreset('Bedroom – Closet', 'wardrobe'),
-  RoomPreset('Bath – Vanity', 'sink'),
-  RoomPreset('Bath – Tub', 'bathtub'),
-  RoomPreset('Bath – Shower', 'shower'),
-];
-// -------------------------------------------------------------------------------
+const double kControlFontSize = 16.0;
 
 class RoomEditorPage extends StatefulWidget {
   final FloorEditor floor;
@@ -87,28 +44,66 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
 
   bool _showNoRoomsWarning = false;
 
-  // Preset selector state
   static const String _kPresetCustom = 'Custom';
   String _presetValue = _kPresetCustom;
 
-  late Set<String> _originalCrossFloorPairIds; // pairIds of cross-floor links involving this room before edits
+  late Set<String> _originalCrossFloorPairIds;
 
   @override
   void initState() {
     super.initState();
     _initialDigest = _computeDigest();
     _snapshot = _RoomSnapshot.capture(widget.floor, widget.roomIndex);
-    _originalCrossFloorPairIds = _collectCrossFloorPairIdsForRoom(); // NEW
+    _originalCrossFloorPairIds = _collectCrossFloorPairIdsForRoom();
 
-    // Try to preselect a preset based on current name if it matches exactly
-    final match = kRoomPresets.firstWhere(
-      (p) => p.label.toLowerCase() == room.name.trim().toLowerCase(),
-      orElse: () => const RoomPreset(_kPresetCustom, 'circle_outlined'),
-    );
-    _presetValue = match.label;
+    final existingRooms =
+        widget.panoramaData.floorRooms[widget.floorIndex] ?? const <RoomData>[];
+    for (int i = 0; i < widget.floor.rooms.length; i++) {
+      final er = widget.floor.rooms[i];
+
+      if (er.presetId == kPresetNone) {
+        if (i >= 0 && i < existingRooms.length) {
+          er.presetId = existingRooms[i].presetId;
+        }
+
+        if (er.presetId == kPresetNone && er.name.trim().isNotEmpty) {
+          final byLabel = getPresetByLabel(er.name);
+          if (byLabel != null) {
+            er.presetId = byLabel.id;
+          }
+        }
+      }
+    }
+
+    if (room.presetId != kPresetNone) {
+      final p = getPresetById(room.presetId);
+      if (p != null && p.id != kPresetNone) {
+        _presetValue = p.label;
+      } else {
+        _presetValue = _kPresetCustom;
+        room.presetId = kPresetNone;
+      }
+    } else {
+      final byLabel = getPresetByLabel(room.name);
+      if (byLabel != null) {
+        room.presetId = byLabel.id;
+        _presetValue = byLabel.label;
+      } else {
+        _presetValue = _kPresetCustom;
+      }
+    }
   }
 
-  // NEW: collect original cross-floor pairIds referencing this room (either side)
+  String _iconKeyForIcon(IconData icon) {
+    for (final e in kIconCatalog.entries) {
+      if (e.value.codePoint == icon.codePoint &&
+          e.value.fontFamily == icon.fontFamily) {
+        return e.key;
+      }
+    }
+    return 'circle_outlined';
+  }
+
   Set<String> _collectCrossFloorPairIdsForRoom() {
     final result = <String>{};
     for (int f = 0; f < widget.allFloorsEditors.length; f++) {
@@ -117,8 +112,8 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
         if (!h.changeFloor || h.pairId.isEmpty) continue;
         final isOutgoingFromThisRoom =
             (f == widget.floorIndex && h.fromRoomId == widget.roomIndex);
-        final isIncomingToThisRoom =
-            (h.targetFloorId == widget.floorIndex && h.toRoomId == widget.roomIndex);
+        final isIncomingToThisRoom = (h.targetFloorId == widget.floorIndex &&
+            h.toRoomId == widget.roomIndex);
         if (isOutgoingFromThisRoom || isIncomingToThisRoom) {
           result.add(h.pairId);
         }
@@ -154,7 +149,7 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
       'name': room.name.trim(),
       'icon': room.iconName,
       'imagePath': room.imagePath,
-      'desc': room.description, // NEW
+      'desc': room.description,
       'conns': conns,
     };
     return convert.jsonEncode(data);
@@ -271,7 +266,6 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
         await _onSavePressed(exitAfter: true);
         break;
       case 'discard':
-        // NEW: clean up any new cross-floor twins created during edit
         _cleanupNewCrossFloorTwins();
         _snapshot.restoreInto(widget.floor, widget.roomIndex);
         Navigator.of(context).pop(true);
@@ -335,7 +329,6 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
     return result ?? false;
   }
 
-  // NEW: remove any newly added cross-floor twins for this room that were not in the original set
   void _cleanupNewCrossFloorTwins() {
     for (int f = 0; f < widget.allFloorsEditors.length; f++) {
       final floor = widget.allFloorsEditors[f];
@@ -343,33 +336,22 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
         if (!h.changeFloor || h.pairId.isEmpty) return false;
         final involvesThisRoom =
             (f == widget.floorIndex && h.fromRoomId == widget.roomIndex) ||
-            (h.targetFloorId == widget.floorIndex && h.toRoomId == widget.roomIndex);
+                (h.targetFloorId == widget.floorIndex &&
+                    h.toRoomId == widget.roomIndex);
         if (!involvesThisRoom) return false;
-        // Remove only if it was created during this editing session.
+
         return !_originalCrossFloorPairIds.contains(h.pairId);
       });
     }
   }
 
-  // NEW: keep preset dropdown in sync with current name/icon
-  void _syncPresetFromFields() {
-    final byName = kRoomPresets.firstWhere(
-      (p) => p.label.toLowerCase() == room.name.trim().toLowerCase(),
-      orElse: () => const RoomPreset(_kPresetCustom, 'circle_outlined'),
-    );
-    // If both label and icon match a preset, select it; else Custom
-    if (byName.label != _kPresetCustom && byName.iconKey == room.iconName) {
-      _presetValue = byName.label;
-    } else {
-      _presetValue = _kPresetCustom;
-    }
-  }
+  void _syncPresetFromFields() {}
 
   @override
   Widget build(BuildContext context) {
     final base = ThemeData.light();
     final themed = base.copyWith(
-      scaffoldBackgroundColor: Colors.white,
+      scaffoldBackgroundColor: AppStyles.surfaceMuted, 
       appBarTheme: base.appBarTheme.copyWith(
         backgroundColor: Colors.transparent,
         foregroundColor: AppStyles.textPrimary,
@@ -397,31 +379,39 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: Colors.white,
+        fillColor: AppStyles.surface,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 12,
+          horizontal: 16,
+          vertical: 16,
         ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppStyles.cardRadius),
           borderSide: BorderSide(
             color: AppStyles.border,
             width: AppStyles.borderWidth,
           ),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppStyles.cardRadius),
           borderSide: BorderSide(
             color: AppStyles.border,
             width: AppStyles.borderWidth,
           ),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: AppStyles.accentActive, width: 1.2),
+          borderRadius: BorderRadius.circular(AppStyles.cardRadius),
+          borderSide: BorderSide(
+            color: AppStyles.textPrimary, 
+            width: 1.5,
+          ),
         ),
         labelStyle: TextStyle(color: AppStyles.textSecondary),
-        hintStyle: TextStyle(color: AppStyles.textSecondary),
+        floatingLabelStyle: TextStyle(
+          color: AppStyles.textPrimary, 
+          fontWeight: FontWeight.w600,
+        ),
+        hintStyle: TextStyle(color: AppStyles.textSecondary.withOpacity(0.5)),
+        prefixIconColor: AppStyles.textSecondary,
       ),
     );
 
@@ -448,6 +438,7 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
     return Theme(
       data: themed,
       child: Scaffold(
+        backgroundColor: AppStyles.surfaceMuted,
         appBar: AppBar(
           automaticallyImplyLeading: false,
           title: Text(room.name.isEmpty ? 'Edit pano' : room.name),
@@ -456,117 +447,121 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           children: [
             _SectionHeader('Basics'),
-
-            // NEW: Preset selector (changes room name and icon)
-            Row(
-              children: [
-                Text('Preset: ', style: TextStyle(color: AppStyles.textPrimary)),
-                const SizedBox(width: 8),
-                _WhiteDropdown<String>(
-                  value: _presetValue,
-                  items: _presetItems(),
-                  onChanged: (v) {
-                    if (v == null) return;
-                    if (v == _kPresetCustom) {
-                      setState(() => _presetValue = v);
-                      return;
-                    }
-                    final preset = kRoomPresets.firstWhere(
-                      (p) => p.label == v,
-                      orElse: () => const RoomPreset(_kPresetCustom, 'circle_outlined'),
-                    );
-                    if (preset.label != _kPresetCustom) {
-                      _applyPreset(preset);
-                      setState(() => _presetValue = preset.label);
-                    }
-                  },
-                  width: 260,
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppStyles.surface,
+                borderRadius: BorderRadius.circular(AppStyles.cardRadius),
+                border: Border.all(
+                  color: AppStyles.border,
+                  width: AppStyles.borderWidth,
                 ),
-              ],
-            ),
-            const SizedBox(height: 8),
-
-            // Name
-            SizedBox(
-              height: kControlHeight,
-              child: TextField(
-                controller: room.nameCtrl,
-                style: TextStyle(
-                  color: AppStyles.textPrimary,
-                  fontSize: kControlFontSize,
-                ),
-                textAlignVertical: TextAlignVertical.center,
-                decoration: const InputDecoration(
-                  labelText: 'Name',
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 0,
-                  ),
-                ),
-                onChanged: (v) => setState(() {
-                  room.name = v;
-                  _syncPresetFromFields();
-                }),
               ),
-            ),
-            const SizedBox(height: 8),
-
-            // Icon
-            Row(
-              children: [
-                Text('Icon: ', style: TextStyle(color: AppStyles.textPrimary)),
-                const SizedBox(width: 8),
-                _WhiteDropdown<String>(
-                  value: room.iconName.isEmpty ? 'circle_outlined' : room.iconName,
-                  items: _iconItems(),
-                  onChanged: (v) => setState(() {
-                    room.iconName = v ?? 'circle_outlined';
-                    _syncPresetFromFields();
-                  }),
-                  width: 180,
-                ),
-                const SizedBox(width: 12),
-                Icon(
-                  kIconCatalog[room.iconName] ?? Icons.circle_outlined,
-                  color: AppStyles.textSecondary,
-                ),
-              ],
-            ),
-            const SizedBox(height: 8), // NEW: extra spacing before description
-
-            // Description (auto-growing, elegant)
-            AnimatedSize(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOut,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: kControlHeight),
-                child: TextField(
-                  controller: room.descCtrl,
-                  minLines: 1,
-                  maxLines: 10, // allow growth
-                  // Removed expands/maxLines:null to enable natural height
-                  style: TextStyle(
-                    color: AppStyles.textPrimary,
-                    fontSize: kControlFontSize,
-                    height: 1.25,
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Text('Preset: ',
+                          style: TextStyle(color: AppStyles.textPrimary)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _WhiteDropdown<String>(
+                          value: _presetValue,
+                          items: _presetItems(),
+                          onChanged: (v) {
+                            if (v == null) return;
+                            if (v == _kPresetCustom) {
+                              setState(() {
+                                _presetValue = v;
+                                room.presetId = kPresetNone;
+                              });
+                              return;
+                            }
+                            final preset = getPresetByLabel(v);
+                            if (preset != null) {
+                              _applyPreset(preset);
+                              setState(() => _presetValue = preset.label);
+                            }
+                          },
+                        ),
+                      ),
+                    ],
                   ),
-                  decoration: InputDecoration(
-                    labelText: 'Description',
-                    alignLabelWithHint: false,
-                    // Slightly refined padding
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: room.nameCtrl,
+                    style: TextStyle(
+                      color: AppStyles.textPrimary,
+                      fontSize: kControlFontSize,
+                      fontWeight: FontWeight.bold, 
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Name',
+                      prefixIcon: Icon(Icons.label_outline),
+                    ),
+                    onChanged: (v) => setState(() {
+                      room.name = v;
+                    }),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Text('Icon: ',
+                          style: TextStyle(color: AppStyles.textPrimary)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _WhiteDropdown<String>(
+                          value: room.iconName.isEmpty
+                              ? 'circle_outlined'
+                              : room.iconName,
+                          items: _iconItems(),
+                          onChanged: (v) => setState(() {
+                            room.iconName = v ?? 'circle_outlined';
+                          }),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: AppStyles.accentInactive.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          kIconCatalog[room.iconName] ?? Icons.circle_outlined,
+                          color: AppStyles.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOut,
+                    child: TextField(
+                      controller: room.descCtrl,
+                      minLines: 1,
+                      maxLines: 10,
+                      style: TextStyle(
+                        color: AppStyles.textPrimary,
+                        fontSize: kControlFontSize,
+                        height: 1.25,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Description',
+                        alignLabelWithHint: true,
+                        prefixIcon: Icon(Icons.description_outlined),
+                      ),
+                      onChanged: (v) => setState(() {
+                        room.description = v;
+                      }),
                     ),
                   ),
-                  onChanged: (v) => setState(() {
-                    room.description = v;
-                  }),
-                ),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            const Divider(height: 24),
+            const SizedBox(height: 24),
             _SectionHeader('Panorama'),
             _PanoramaUploadBox(
               path: room.imagePath,
@@ -577,15 +572,15 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
                 });
               },
             ),
-            const Divider(height: 24),
-            _SectionHeader('Connections'),
+            const SizedBox(height: 24),
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                _SectionHeader('Connections', padding: EdgeInsets.zero),
                 _WhiteButton.icon(
                   icon: Icons.add_link,
                   label: 'Add connection',
                   onPressed: () {
-                    // 1) Same-floor availability (unique targets)
                     final connections = widget.floor.hotspots
                         .where((h) => h.fromRoomId == widget.roomIndex)
                         .toList();
@@ -601,22 +596,22 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
                         .where((i) => !connectedSameFloor.contains(i))
                         .toList();
 
-                    // 2) Cross-floor availability (exclude already connected cross-floor targets)
-                    final allFloorsCount = widget.panoramaData.floorRooms.length;
-                    final otherFloorIds = List.generate(allFloorsCount, (i) => i)
-                        .where((i) => i != widget.floorIndex)
-                        .toList();
+                    final allFloorsCount =
+                        widget.panoramaData.floorRooms.length;
+                    final otherFloorIds =
+                        List.generate(allFloorsCount, (i) => i)
+                            .where((i) => i != widget.floorIndex)
+                            .toList();
 
                     final usedCrossTargets = connections
                         .where((h) => h.changeFloor)
                         .map((h) => '${h.targetFloorId}:${h.toRoomId}')
                         .toSet();
 
-                    // Build list of available cross-floor target pairs (floorId, roomId)
                     final List<MapEntry<int, int>> availableCrossTargets = [];
                     for (final fi in otherFloorIds) {
-                      final rooms =
-                          widget.panoramaData.floorRooms[fi] ?? const <RoomData>[];
+                      final rooms = widget.panoramaData.floorRooms[fi] ??
+                          const <RoomData>[];
                       for (int ri = 0; ri < rooms.length; ri++) {
                         final key = '$fi:$ri';
                         if (!usedCrossTargets.contains(key)) {
@@ -638,10 +633,11 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
                       final pid = _newPairId();
 
                       if (!noneSame) {
-                        // Prefer same-floor when available
                         final to = uniqueSameFloorAvailable.first;
                         final r = widget.floor.rooms[to];
-                        final label = r.name.trim().isNotEmpty ? r.name.trim() : 'Pano $to';
+                        final label = r.name.trim().isNotEmpty
+                            ? r.name.trim()
+                            : 'Pano $to';
 
                         final h = EditableHotspot(
                           fromRoomId: widget.roomIndex,
@@ -666,14 +662,15 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
                         return;
                       }
 
-                      // Otherwise, add a cross-floor connection to the first available target
                       final target = availableCrossTargets.first;
                       final tf = target.key;
                       final tr = target.value;
-                      final rooms = widget.panoramaData.floorRooms[tf] ?? const <RoomData>[];
-                      final name = (rooms.isNotEmpty && rooms[tr].name.isNotEmpty)
-                          ? rooms[tr].name
-                          : 'Pano $tr';
+                      final rooms = widget.panoramaData.floorRooms[tf] ??
+                          const <RoomData>[];
+                      final name =
+                          (rooms.isNotEmpty && rooms[tr].name.isNotEmpty)
+                              ? rooms[tr].name
+                              : 'Pano $tr';
 
                       final h = EditableHotspot(
                         fromRoomId: widget.roomIndex,
@@ -700,9 +697,10 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
                 ),
               ],
             ),
+            const SizedBox(height: 8),
             if (_showNoRoomsWarning)
               Padding(
-                padding: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.only(bottom: 8),
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
@@ -716,12 +714,14 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.info_outline, color: Colors.orange, size: 18),
+                      const Icon(Icons.info_outline,
+                          color: Colors.orange, size: 18),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           'All rooms are already connected. Add another room to create more connections.',
-                          style: TextStyle(color: Colors.orange.shade800, fontSize: 13),
+                          style: TextStyle(
+                              color: Colors.orange.shade800, fontSize: 13),
                         ),
                       ),
                     ],
@@ -730,7 +730,7 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
               ),
             if (connections.isNotEmpty && !hasImage)
               Padding(
-                padding: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.only(bottom: 8),
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
@@ -767,7 +767,6 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
                   ),
                 ),
               ),
-            const SizedBox(height: 8),
             AnimatedSize(
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeInOut,
@@ -782,112 +781,125 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
                       ),
                     ),
                   ...connections.map(
-                    (h) => _FlatConnectionRow(
-                      floor: widget.floor,
-                      hotspot: h,
-                      floorIndex: widget.floorIndex,
-                      panoramaData: panoramaData,
-                      allFloorsEditors: widget.allFloorsEditors,
-                      onChanged: () => setState(() {}),
-                      onPickInPano: () async {
-                        final imgPath = room.imagePath;
-                        if (imgPath.isEmpty || !File(imgPath).existsSync()) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Upload a panorama image first'),
-                            ),
-                          );
-                          return;
-                        }
+                    (h) => Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppStyles.surface,
+                        borderRadius:
+                            BorderRadius.circular(AppStyles.cardRadius),
+                        border: Border.all(
+                          color: AppStyles.border,
+                          width: AppStyles.borderWidth,
+                        ),
+                      ),
+                      child: _FlatConnectionRow(
+                        floor: widget.floor,
+                        hotspot: h,
+                        floorIndex: widget.floorIndex,
+                        panoramaData: panoramaData,
+                        allFloorsEditors: widget.allFloorsEditors,
+                        onChanged: () => setState(() {}),
+                        onPickInPano: () async {
+                          final imgPath = room.imagePath;
+                          if (imgPath.isEmpty || !File(imgPath).existsSync()) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Upload a panorama image first'),
+                              ),
+                            );
+                            return;
+                          }
 
-                        final existing = widget.floor.hotspots
-                            .where(
-                          (x) =>
-                              x.fromRoomId == widget.roomIndex &&
-                              x != h &&
-                              !(x.latitude == 0 && x.longitude == 0) &&
-                              !x.changeFloor,
-                        )
-                            .map((x) {
-                          final toRoom = widget.floor.rooms[x.toRoomId];
-                          final icon = kIconCatalog[toRoom.iconName] ??
-                              Icons.circle_outlined;
-                          final label = x.text.isNotEmpty
-                              ? x.text
-                              : (toRoom.name.isNotEmpty
-                                  ? toRoom.name
-                                  : 'Pano ${x.toRoomId}');
-                          return PickerMarker(
-                            latitude: x.latitude,
-                            longitude: x.longitude,
-                            label: label,
-                            icon: icon,
-                          );
-                        }).toList();
+                          final existing = widget.floor.hotspots
+                              .where(
+                            (x) =>
+                                x.fromRoomId == widget.roomIndex &&
+                                x != h &&
+                                !(x.latitude == 0 && x.longitude == 0) &&
+                                !x.changeFloor,
+                          )
+                              .map((x) {
+                            final toRoom = widget.floor.rooms[x.toRoomId];
+                            final icon = kIconCatalog[toRoom.iconName] ??
+                                Icons.circle_outlined;
+                            final label = x.text.isNotEmpty
+                                ? x.text
+                                : (toRoom.name.isNotEmpty
+                                    ? toRoom.name
+                                    : 'Pano ${x.toRoomId}');
+                            return PickerMarker(
+                              latitude: x.latitude,
+                              longitude: x.longitude,
+                              label: label,
+                              icon: icon,
+                            );
+                          }).toList();
 
-                        IconData selectedIcon = Icons.place;
-                        String selectedLabel;
-                        if (!h.changeFloor) {
-                          final toRoom = widget.floor.rooms[h.toRoomId];
-                          selectedIcon =
-                              kIconCatalog[toRoom.iconName] ?? Icons.place;
-                          selectedLabel = h.text.isNotEmpty
-                              ? h.text
-                              : (toRoom.name.isNotEmpty
-                                  ? toRoom.name
-                                  : 'Pano ${h.toRoomId}');
-                        } else {
-                          final rooms = panoramaData.floorRooms[
-                                  h.targetFloorId ?? widget.floorIndex] ??
-                              const <RoomData>[];
-                          if (rooms.isNotEmpty) {
-                            final idx = h.toRoomId.clamp(0, rooms.length - 1);
-                            selectedIcon = rooms[idx].icon;
-                            final name = rooms[idx].name;
+                          IconData selectedIcon = Icons.place;
+                          String selectedLabel;
+                          if (!h.changeFloor) {
+                            final toRoom = widget.floor.rooms[h.toRoomId];
+                            selectedIcon =
+                                kIconCatalog[toRoom.iconName] ?? Icons.place;
                             selectedLabel = h.text.isNotEmpty
                                 ? h.text
-                                : (name.isNotEmpty
-                                    ? name
+                                : (toRoom.name.isNotEmpty
+                                    ? toRoom.name
                                     : 'Pano ${h.toRoomId}');
                           } else {
-                            selectedLabel = h.text.isNotEmpty
-                                ? h.text
-                                : 'Pano ${h.toRoomId}';
+                            final rooms = panoramaData.floorRooms[
+                                    h.targetFloorId ?? widget.floorIndex] ??
+                                const <RoomData>[];
+                            if (rooms.isNotEmpty) {
+                              final idx = h.toRoomId.clamp(0, rooms.length - 1);
+                              selectedIcon = rooms[idx].icon;
+                              final name = rooms[idx].name;
+                              selectedLabel = h.text.isNotEmpty
+                                  ? h.text
+                                  : (name.isNotEmpty
+                                      ? name
+                                      : 'Pano ${h.toRoomId}');
+                            } else {
+                              selectedLabel = h.text.isNotEmpty
+                                  ? h.text
+                                  : 'Pano ${h.toRoomId}';
+                            }
                           }
-                        }
 
-                        final result =
-                            await Navigator.push<Map<String, double>>(
-                          context,
-                          MaterialPageRoute(
-                            fullscreenDialog: true,
-                            builder: (_) => PanoHotspotPicker(
-                              imagePath: imgPath,
-                              initialLatitude: h.latitude,
-                              initialLongitude: h.longitude,
-                              markers: existing,
-                              selectedIcon: selectedIcon,
-                              selectedLabel: selectedLabel,
+                          final result =
+                              await Navigator.push<Map<String, double>>(
+                            context,
+                            MaterialPageRoute(
+                              fullscreenDialog: true,
+                              builder: (_) => PanoHotspotPicker(
+                                imagePath: imgPath,
+                                initialLatitude: h.latitude,
+                                initialLongitude: h.longitude,
+                                markers: existing,
+                                selectedIcon: selectedIcon,
+                                selectedLabel: selectedLabel,
+                              ),
                             ),
-                          ),
-                        );
-                        if (result != null &&
-                            result.containsKey('lat') &&
-                            result.containsKey('lon')) {
-                          setState(() {
-                            h.latitude = result['lat']!;
-                            h.longitude = result['lon']!;
-                            h.latCtrl.text = h.latitude.toStringAsFixed(1);
-                            h.lonCtrl.text = h.longitude.toStringAsFixed(1);
-                            _updateTwinFromSource(
-                              widget.floor,
-                              h,
-                              allEditors: widget.allFloorsEditors,
-                              sourceFloorIndex: widget.floorIndex,
-                            );
-                          });
-                        }
-                      },
+                          );
+                          if (result != null &&
+                              result.containsKey('lat') &&
+                              result.containsKey('lon')) {
+                            setState(() {
+                              h.latitude = result['lat']!;
+                              h.longitude = result['lon']!;
+                              h.latCtrl.text = h.latitude.toStringAsFixed(1);
+                              h.lonCtrl.text = h.longitude.toStringAsFixed(1);
+                              _updateTwinFromSource(
+                                widget.floor,
+                                h,
+                                allEditors: widget.allFloorsEditors,
+                                sourceFloorIndex: widget.floorIndex,
+                              );
+                            });
+                          }
+                        },
+                      ),
                     ),
                   ),
                 ],
@@ -953,6 +965,7 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
                 _WhiteButton.icon(
                   icon: Icons.check,
                   label: 'Save',
+                  isPrimary: true, 
                   onPressed: () => _onSavePressed(),
                 ),
             ],
@@ -969,14 +982,13 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
         .toList();
   }
 
-  // Build dropdown items for presets
   List<DropdownMenuItem<String>> _presetItems() {
     return [
       const DropdownMenuItem<String>(
         value: _kPresetCustom,
         child: Text(_kPresetCustom),
       ),
-      ...kRoomPresets.map(
+      ...kRoomPresetCatalog.map(
         (p) => DropdownMenuItem<String>(
           value: p.label,
           child: Text(p.label),
@@ -985,52 +997,38 @@ class _RoomEditorPageState extends State<RoomEditorPage> {
     ];
   }
 
-  void _applyPreset(RoomPreset preset) {
-    // Ensure icon key exists in catalog;
-    final iconKey = kIconCatalog.containsKey(preset.iconKey)
-        ? preset.iconKey
-        : 'circle_outlined';
+  void _applyPreset(dynamic preset) {
+    final iconKey = _iconKeyForIcon(preset.icon);
     setState(() {
+      room.presetId = preset.id;
+      _presetValue = preset.label;
+
       room.name = preset.label;
       room.iconName = iconKey;
 
-      // Update the name input field too
       room.nameCtrl.text = room.name;
-      // Optionally place cursor at end
       room.nameCtrl.selection = TextSelection.fromPosition(
         TextPosition(offset: room.nameCtrl.text.length),
       );
-
-      // If you want to keep your previous behavior, leave these;
-      // otherwise remove them if presets should not reset other fields.
-      // room.imagePath = '';
-      // room.imageCtrl.text = '';
-      // widget.floor.hotspots
-      //     .where((h) => h.fromRoomId == widget.roomIndex)
-      //     .forEach((h) {
-      //   h.text = '';
-      //   h.latitude = 0;
-      //   h.longitude = 0;
-      //   h.latCtrl.text = '0';
-      //   h.lonCtrl.text = '0';
-      // });
     });
   }
 }
 
 class _SectionHeader extends StatelessWidget {
   final String title;
-  const _SectionHeader(this.title);
+  final EdgeInsetsGeometry padding;
+  const _SectionHeader(this.title, {this.padding = const EdgeInsets.only(bottom: 8)});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: padding,
       child: Text(
         title,
         style: TextStyle(
           color: AppStyles.textPrimary,
           fontWeight: FontWeight.w700,
+          fontSize: 16,
         ),
       ),
     );
@@ -1062,27 +1060,23 @@ class _FlatConnectionRow extends StatelessWidget {
     final otherFloorIds = floorKeys.where((k) => k != floorIndex).toList();
     final hasOtherFloors = otherFloorIds.isNotEmpty;
 
-    // Same-floor availability (unique targets only, excluding current room and already-connected rooms)
     final int fromId = hotspot.fromRoomId;
     final List<int> sameFloorCandidates =
-        List.generate(floor.rooms.length, (i) => i).where((i) => i != fromId).toList();
+        List.generate(floor.rooms.length, (i) => i)
+            .where((i) => i != fromId)
+            .toList();
 
     final Set<int> usedSameFloorTargets = floor.hotspots
-        .where((h) =>
-            h.fromRoomId == fromId &&
-            h != hotspot &&            // exclude self
-            !h.changeFloor)            // only same-floor connections
+        .where((h) => h.fromRoomId == fromId && h != hotspot && !h.changeFloor)
         .map((h) => h.toRoomId)
         .toSet();
 
-    // These are the only valid unique targets available for a new same-floor connection
-    final List<int> uniqueSameFloorAvailable =
-        sameFloorCandidates.where((i) => !usedSameFloorTargets.contains(i)).toList();
+    final List<int> uniqueSameFloorAvailable = sameFloorCandidates
+        .where((i) => !usedSameFloorTargets.contains(i))
+        .toList();
 
-    // Can this cross-floor connection be switched OFF to same-floor without creating duplicates?
     final bool canToggleChangeFloorOff = uniqueSameFloorAvailable.isNotEmpty;
 
-    // NEW: Cross-floor availability (exclude already connected cross-floor targets)
     final usedCrossTargets = floor.hotspots
         .where((h) => h.fromRoomId == fromId && h.changeFloor)
         .map((h) => '${h.targetFloorId}:${h.toRoomId}')
@@ -1100,7 +1094,6 @@ class _FlatConnectionRow extends StatelessWidget {
     }
     final bool hasCrossFloorTargetsAvailable = availableCrossTargets.isNotEmpty;
 
-    // Existing code to build available/filtered same-floor ids for current 'To' dropdown
     final excludeCurrent = floor.rooms.length > 1;
     final currentId = hotspot.fromRoomId;
     final availableRoomIds = List.generate(
@@ -1218,146 +1211,133 @@ class _FlatConnectionRow extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Text('To'),
+              const Text('To', style: TextStyle(fontWeight: FontWeight.w500)),
               const SizedBox(width: 8),
-              _WhiteDropdown<int>(
-                value: toValue,
-                items: toItems,
-                onChanged: hotspot.changeFloor
-                    ? null
-                    : (v) {
-                        final oldTo = hotspot.toRoomId;
-                        hotspot.toRoomId = v ?? hotspot.toRoomId;
-                        if (!hotspot.changeFloor) {
-                          _retargetTwinForToChange(
-                            floor,
-                            hotspot,
-                            oldTo,
-                            hotspot.fromRoomId,
-                          );
-                        }
-                        onChanged();
-                      },
-                width: 150,
-              ),
-              const SizedBox(width: 12),
               Expanded(
-                child: SizedBox(
-                  height: kControlHeight,
-                  child: TextField(
-                    controller: hotspot.textCtrl,
-                    style: TextStyle(
-                      color: AppStyles.textPrimary,
-                      fontSize: kControlFontSize,
-                    ),
-                    textAlignVertical: TextAlignVertical.center,
-                    decoration: const InputDecoration(
-                      labelText: 'Label *',
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 0,
-                      ),
-                    ),
-                    onChanged: (v) {
-                      hotspot.text = v;
-                      _updateTwinFromSource(
-                        floor,
-                        hotspot,
-                        allEditors: allFloorsEditors,
-                        sourceFloorIndex: floorIndex,
-                      );
-                      onChanged();
-                    },
-                  ),
+                child: _WhiteDropdown<int>(
+                  value: toValue,
+                  items: toItems,
+                  onChanged: hotspot.changeFloor
+                      ? null
+                      : (v) {
+                          final oldTo = hotspot.toRoomId;
+                          hotspot.toRoomId = v ?? hotspot.toRoomId;
+                          if (!hotspot.changeFloor) {
+                            _retargetTwinForToChange(
+                              floor,
+                              hotspot,
+                              oldTo,
+                              hotspot.fromRoomId,
+                            );
+                          }
+                          onChanged();
+                        },
                 ),
               ),
-              IconButton(
-                tooltip: 'Remove',
-                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                onPressed: () async {
-                  final ok = await confirmDeleteDialog(
-                    context,
-                    title: 'Remove connection',
-                    message: 'This will remove this connection.',
-                    confirmLabel: 'Remove',
-                    confirmIcon: Icons.link_off,
-                  );
-                  if (!ok) return;
-                  _removeTwin(
-                    floor,
-                    hotspot,
-                    allEditors: allFloorsEditors,
-                    sourceFloorIndex: floorIndex,
-                  );
-                  floor.hotspots.remove(hotspot);
-                  onChanged();
-                },
+              const SizedBox(width: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: AppStyles.surfaceAccent,
+                  borderRadius: BorderRadius.circular(AppStyles.pillRadius),
+                ),
+                child: IconButton(
+                  tooltip: 'Remove',
+                  icon: Icon(
+                    Icons.delete_outline,
+                    color: AppStyles.textSecondary,
+                  ),
+                  onPressed: () async {
+                    final ok = await confirmDeleteDialog(
+                      context,
+                      title: 'Remove connection',
+                      message: 'This will remove this connection.',
+                      confirmLabel: 'Remove',
+                      confirmIcon: Icons.link_off,
+                    );
+                    if (!ok) return;
+                    _removeTwin(
+                      floor,
+                      hotspot,
+                      allEditors: allFloorsEditors,
+                      sourceFloorIndex: floorIndex,
+                    );
+                    floor.hotspots.remove(hotspot);
+                    onChanged();
+                  },
+                ),
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: hotspot.textCtrl,
+            style: TextStyle(
+              color: AppStyles.textPrimary,
+              fontSize: kControlFontSize,
+            ),
+            decoration: const InputDecoration(
+              labelText: 'Label *',
+              prefixIcon: Icon(Icons.label_outline),
+            ),
+            onChanged: (v) {
+              hotspot.text = v;
+              _updateTwinFromSource(
+                floor,
+                hotspot,
+                allEditors: allFloorsEditors,
+                sourceFloorIndex: floorIndex,
+              );
+              onChanged();
+            },
           ),
           const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
-                child: SizedBox(
-                  height: kControlHeight,
-                  child: TextField(
-                    controller: hotspot.latCtrl,
-                    keyboardType: TextInputType.number,
-                    style: TextStyle(
-                      color: AppStyles.textPrimary,
-                      fontSize: kControlFontSize,
-                    ),
-                    textAlignVertical: TextAlignVertical.center,
-                    decoration: const InputDecoration(
-                      labelText: 'Lat',
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 0,
-                      ),
-                    ),
-                    onChanged: (v) {
-                      hotspot.latitude = double.tryParse(v) ?? hotspot.latitude;
-                      _updateTwinFromSource(
-                        floor,
-                        hotspot,
-                        allEditors: allFloorsEditors,
-                        sourceFloorIndex: floorIndex,
-                      );
-                    },
+                child: TextField(
+                  controller: hotspot.latCtrl,
+                  keyboardType: TextInputType.number,
+                  style: TextStyle(
+                    color: AppStyles.textPrimary,
+                    fontSize: kControlFontSize,
                   ),
+                  decoration: const InputDecoration(
+                    labelText: 'Lat',
+                    prefixIcon: Icon(Icons.explore_outlined),
+                  ),
+                  onChanged: (v) {
+                    hotspot.latitude = double.tryParse(v) ?? hotspot.latitude;
+                    _updateTwinFromSource(
+                      floor,
+                      hotspot,
+                      allEditors: allFloorsEditors,
+                      sourceFloorIndex: floorIndex,
+                    );
+                  },
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: SizedBox(
-                  height: kControlHeight,
-                  child: TextField(
-                    controller: hotspot.lonCtrl,
-                    keyboardType: TextInputType.number,
-                    style: TextStyle(
-                      color: AppStyles.textPrimary,
-                      fontSize: kControlFontSize,
-                    ),
-                    textAlignVertical: TextAlignVertical.center,
-                    decoration: const InputDecoration(
-                      labelText: 'Lon',
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 0,
-                      ),
-                    ),
-                    onChanged: (v) {
-                      hotspot.longitude =
-                          double.tryParse(v) ?? hotspot.longitude;
-                      _updateTwinFromSource(
-                        floor,
-                        hotspot,
-                        allEditors: allFloorsEditors,
-                        sourceFloorIndex: floorIndex,
-                      );
-                    },
+                child: TextField(
+                  controller: hotspot.lonCtrl,
+                  keyboardType: TextInputType.number,
+                  style: TextStyle(
+                    color: AppStyles.textPrimary,
+                    fontSize: kControlFontSize,
                   ),
+                  decoration: const InputDecoration(
+                    labelText: 'Lon',
+                    prefixIcon: Icon(Icons.explore_outlined),
+                  ),
+                  onChanged: (v) {
+                    hotspot.longitude = double.tryParse(v) ?? hotspot.longitude;
+                    _updateTwinFromSource(
+                      floor,
+                      hotspot,
+                      allEditors: allFloorsEditors,
+                      sourceFloorIndex: floorIndex,
+                    );
+                  },
                 ),
               ),
               const SizedBox(width: 8),
@@ -1370,7 +1350,7 @@ class _FlatConnectionRow extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Padding(
-            padding: const EdgeInsets.only(left: 8.0),
+            padding: const EdgeInsets.only(left: 4.0),
             child: Wrap(
               spacing: 10,
               runSpacing: 6,
@@ -1394,10 +1374,17 @@ class _FlatConnectionRow extends StatelessWidget {
                     );
                     onChanged();
                   },
-                  selectedColor: Colors.blue.shade50,
-                  backgroundColor: Colors.grey.shade200,
+                  selectedColor: AppStyles.controlBgActive,
+                  backgroundColor: AppStyles.surface,
                   labelStyle: TextStyle(
-                    color: hotspot.isPaired ? Colors.blue : Colors.black54,
+                    color: AppStyles.textPrimary,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide(
+                      color: AppStyles.border,
+                      width: AppStyles.borderWidth,
+                    ),
                   ),
                 ),
                 ChoiceChip(
@@ -1409,7 +1396,6 @@ class _FlatConnectionRow extends StatelessWidget {
                   onSelected: (hasOtherFloors || hotspot.changeFloor)
                       ? (selected) {
                           if (selected) {
-                            // NEW: block turning ON if no cross-floor targets left
                             if (!hasCrossFloorTargetsAvailable) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
@@ -1422,7 +1408,6 @@ class _FlatConnectionRow extends StatelessWidget {
                             }
                             hotspot.changeFloor = true;
 
-                            // Pick first available unique cross-floor target
                             final pick = availableCrossTargets.first;
                             hotspot.targetFloorId = pick.key;
                             hotspot.toRoomId = pick.value;
@@ -1437,7 +1422,6 @@ class _FlatConnectionRow extends StatelessWidget {
                             return;
                           }
 
-                          // Turning OFF: only if a unique same-floor target exists
                           if (!canToggleChangeFloorOff) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
@@ -1470,32 +1454,19 @@ class _FlatConnectionRow extends StatelessWidget {
                           onChanged();
                         }
                       : null,
-                  selectedColor: Colors.blue.shade50,
-                  backgroundColor: Colors.grey.shade200,
+                  selectedColor: AppStyles.controlBgActive,
+                  backgroundColor: AppStyles.surface,
                   labelStyle: TextStyle(
-                    color: hotspot.changeFloor ? Colors.blue : Colors.black54,
+                    color: AppStyles.textPrimary,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide(
+                      color: AppStyles.border,
+                      width: AppStyles.borderWidth,
+                    ),
                   ),
                 ),
-                // if (!hasCrossFloorTargetsAvailable)
-                //   Text(
-                //     '(no cross-floor targets available)',
-                //     style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
-                //   ),
-                // if (!canToggleChangeFloorOff && hotspot.changeFloor)
-                //   Text(
-                //     '(all same-floor rooms connected)',
-                //     style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
-                //   ),
-                // if (!hasOtherFloors)
-                //   Text(
-                //     '(add another floor to enable)',
-                //     style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
-                //   ),
-                // if (!canToggleChangeFloorOff && hotspot.changeFloor)
-                //   Text(
-                //     '(all same-floor rooms connected)',
-                //     style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
-                //   ),
               ],
             ),
           ),
@@ -1651,14 +1622,12 @@ class _FlatConnectionRow extends StatelessWidget {
   }
 }
 
-// Helper: room name or fallback
 String _labelForRoom(FloorEditor floor, int roomId) {
   if (roomId < 0 || roomId >= floor.rooms.length) return 'Pano $roomId';
   final nm = floor.rooms[roomId].name.trim();
   return nm.isNotEmpty ? nm : 'Pano $roomId';
 }
 
-// Helper: label that the twin should have (source room name)
 String _twinLabelForSameFloor(FloorEditor floor, EditableHotspot src) {
   return _labelForRoom(floor, src.fromRoomId);
 }
@@ -1702,9 +1671,7 @@ EditableHotspot _ensureTwin(FloorEditor floor, EditableHotspot h) {
     existing.fromRoomId = h.toRoomId;
     existing.toRoomId = h.fromRoomId;
 
-    // If twin was mirroring src or has no label, set to source-room label
-    if (existing.text.trim().isEmpty ||
-        existing.text.trim() == h.text.trim()) {
+    if (existing.text.trim().isEmpty || existing.text.trim() == h.text.trim()) {
       existing.text = desiredTwinLabel;
       try {
         existing.textCtrl.text = existing.text;
@@ -1712,7 +1679,7 @@ EditableHotspot _ensureTwin(FloorEditor floor, EditableHotspot h) {
     }
 
     existing.iconName = h.iconName;
-    if (h.isPaired) _applySameFloorMirroredLon(h, existing); // CHANGED
+    if (h.isPaired) _applySameFloorMirroredLon(h, existing);
     return existing;
   }
 
@@ -1722,11 +1689,11 @@ EditableHotspot _ensureTwin(FloorEditor floor, EditableHotspot h) {
     toRoomId: h.fromRoomId,
     latitude: 0,
     longitude: 0,
-    text: desiredTwinLabel, // use source-room label, not src.text
+    text: desiredTwinLabel,
     iconName: h.iconName,
     pairId: pid,
   );
-  if (h.isPaired) _applySameFloorMirroredLon(h, twin); // CHANGED
+  if (h.isPaired) _applySameFloorMirroredLon(h, twin);
   try {
     twin.textCtrl.text = twin.text;
   } catch (_) {}
@@ -1755,7 +1722,6 @@ void _updateTwinFromSource(
 
   final twin = _ensureTwin(floor, h);
 
-  // Keep twin's label distinct: set to source-room label if it mirrored src or empty
   final desiredTwinLabel = _twinLabelForSameFloor(floor, h);
   if (twin.text.trim().isEmpty || twin.text.trim() == h.text.trim()) {
     twin.text = desiredTwinLabel;
@@ -1767,7 +1733,7 @@ void _updateTwinFromSource(
   twin.iconName = h.iconName;
   twin.fromRoomId = h.toRoomId;
   twin.toRoomId = h.fromRoomId;
-  _applySameFloorMirroredLon(h, twin); // CHANGED
+  _applySameFloorMirroredLon(h, twin);
 }
 
 void _retargetTwinForToChange(
@@ -1781,7 +1747,6 @@ void _retargetTwinForToChange(
   twin.fromRoomId = src.toRoomId;
   twin.toRoomId = src.fromRoomId;
 
-  // Keep twin label as source-room label
   final desired = _twinLabelForSameFloor(floor, src);
   if (twin.text.trim().isEmpty || twin.text.trim() == src.text.trim()) {
     twin.text = desired;
@@ -1790,10 +1755,8 @@ void _retargetTwinForToChange(
     } catch (_) {}
   }
 
-  if (src.isPaired) _applySameFloorMirroredLon(src, twin); // CHANGED
+  if (src.isPaired) _applySameFloorMirroredLon(src, twin);
 }
-
-// Cross-floor twin logic remains: uses _applyOppositeLatLon inside _ensureCrossFloorTwin
 
 double _wrapLon180(double lon) {
   while (lon > 180) lon -= 360;
@@ -1801,17 +1764,15 @@ double _wrapLon180(double lon) {
   return lon;
 }
 
-// NEW: for same-floor twins, only mirror longitude (keep latitude the same)
 void _applySameFloorMirroredLon(EditableHotspot src, EditableHotspot dst) {
-  dst.latitude = src.latitude; // keep same-floor lat
-  dst.longitude = _wrapLon180(src.longitude + 180.0); // opposite lon
+  dst.latitude = src.latitude;
+  dst.longitude = _wrapLon180(src.longitude + 180.0);
   try {
     dst.latCtrl.text = dst.latitude.toStringAsFixed(1);
     dst.lonCtrl.text = dst.longitude.toStringAsFixed(1);
   } catch (_) {}
 }
 
-// For cross-floor twins, mirror both latitude and longitude
 void _applyOppositeLatLon(EditableHotspot src, EditableHotspot dst) {
   dst.latitude = -src.latitude;
   dst.longitude = _wrapLon180(src.longitude + 180.0);
@@ -1864,7 +1825,8 @@ class _RoomSnapshot {
   final String name;
   final String iconName;
   final String imagePath;
-  final String description; // NEW
+  final String description;
+  final int presetId;
   final List<_ConnSnapshot> conns;
   final List<_IncomingSnapshot> incoming;
 
@@ -1872,7 +1834,8 @@ class _RoomSnapshot {
     required this.name,
     required this.iconName,
     required this.imagePath,
-    required this.description, // NEW
+    required this.description,
+    required this.presetId,
     required this.conns,
     required this.incoming,
   });
@@ -1915,7 +1878,8 @@ class _RoomSnapshot {
       name: r.name,
       iconName: r.iconName,
       imagePath: r.imagePath,
-      description: r.description, // NEW
+      description: r.description,
+      presetId: r.presetId,
       conns: conns,
       incoming: incoming,
     );
@@ -1926,11 +1890,12 @@ class _RoomSnapshot {
     r.name = name;
     r.iconName = iconName;
     r.imagePath = imagePath;
-    r.description = description; // NEW
+    r.description = description;
+    r.presetId = presetId;
     try {
       r.nameCtrl.text = name;
       r.imageCtrl.text = imagePath;
-      r.descCtrl.text = description; // NEW
+      r.descCtrl.text = description;
     } catch (_) {}
     floor.hotspots.removeWhere(
       (h) => h.fromRoomId == roomIndex || h.toRoomId == roomIndex,
@@ -2044,11 +2009,11 @@ class _PanoramaUploadBox extends StatelessWidget {
           final p = result?.files.single.path;
           if (p != null) onPick(p);
         },
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppStyles.cardRadius),
         child: Container(
           decoration: BoxDecoration(
             color: AppStyles.surface,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(AppStyles.cardRadius),
             border: Border.all(
               color: AppStyles.border,
               width: AppStyles.borderWidth,
@@ -2083,20 +2048,20 @@ class _PanoramaUploadBox extends StatelessWidget {
                 bottom: 8,
                 child: Container(
                   decoration: BoxDecoration(
-                    color: const Color.fromRGBO(255, 255, 255, 0.9),
-                    borderRadius: BorderRadius.circular(10),
+                    color: AppStyles.surfaceMuted, 
+                    borderRadius: BorderRadius.circular(AppStyles.cardRadius),
                     border: Border.all(
                       color: AppStyles.border,
                       width: AppStyles.borderWidth,
                     ),
                   ),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     child: Row(
                       children: [
-                        Icon(Icons.image_search, size: 16),
-                        SizedBox(width: 6),
-                        Text('Change image'),
+                        Icon(Icons.image_search, size: 16, color: AppStyles.textPrimary),
+                        const SizedBox(width: 6),
+                        Text('Change image', style: TextStyle(color: AppStyles.textPrimary)),
                       ],
                     ),
                   ),
@@ -2114,11 +2079,13 @@ class _WhiteButton extends StatefulWidget {
   final IconData icon;
   final String label;
   final VoidCallback onPressed;
+  final bool isPrimary;
 
   const _WhiteButton.icon({
     required this.icon,
     required this.label,
     required this.onPressed,
+    this.isPrimary = false,
   });
 
   @override
@@ -2131,12 +2098,16 @@ class _WhiteButtonState extends State<_WhiteButton> {
 
   @override
   Widget build(BuildContext context) {
-    final bg = Colors.white;
+    
+    final bg = widget.isPrimary ? AppStyles.textPrimary : AppStyles.surface;
+    
+    final fg = widget.isPrimary ? AppStyles.surface : AppStyles.textPrimary;
+    
     final border = Border.all(
-      color: AppStyles.border,
+      color: widget.isPrimary ? AppStyles.textPrimary : AppStyles.border,
       width: AppStyles.borderWidth,
     );
-    final radius = BorderRadius.circular(12);
+    final radius = BorderRadius.circular(AppStyles.cardRadius);
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
@@ -2149,20 +2120,29 @@ class _WhiteButtonState extends State<_WhiteButton> {
         onTap: widget.onPressed,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color: _pressed ? bg.withOpacity(0.95) : bg,
             borderRadius: radius,
             border: border,
+            boxShadow: widget.isPrimary && _hover
+                ? [
+                    BoxShadow(
+                      color: AppStyles.textPrimary.withOpacity(0.2),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
+                    )
+                  ]
+                : null,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(widget.icon, size: 16, color: AppStyles.textPrimary),
+              Icon(widget.icon, size: 16, color: fg),
               const SizedBox(width: 6),
               Text(
                 widget.label,
-                style: TextStyle(color: AppStyles.textPrimary),
+                style: TextStyle(color: fg, fontWeight: FontWeight.w600),
               ),
             ],
           ),
@@ -2205,8 +2185,8 @@ class _WhiteDropdown<T> extends StatelessWidget {
         constraints: const BoxConstraints(minHeight: kControlHeight),
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
+          color: AppStyles.surface,
+          borderRadius: BorderRadius.circular(AppStyles.cardRadius),
           border: Border.all(
             color: AppStyles.border,
             width: AppStyles.borderWidth,
@@ -2220,7 +2200,7 @@ class _WhiteDropdown<T> extends StatelessWidget {
           isDense: true,
           isExpanded: true,
           iconEnabledColor: AppStyles.textPrimary,
-          dropdownColor: Colors.white,
+          dropdownColor: AppStyles.surface,
           style: TextStyle(
             color: AppStyles.textPrimary,
             fontSize: kControlFontSize,
@@ -2273,7 +2253,6 @@ EditableHotspot _ensureCrossFloorTwin(
   final targetFloor = editors[targetFloorIndex];
   final pid = _ensurePairId(src);
 
-  // Twin label = source room name
   String twinLabel() => _labelForRoom(sourceFloor, src.fromRoomId);
 
   for (final h in targetFloor.hotspots) {
@@ -2282,7 +2261,6 @@ EditableHotspot _ensureCrossFloorTwin(
         h.targetFloorId == sourceFloorIndex &&
         h.fromRoomId == src.toRoomId &&
         h.toRoomId == src.fromRoomId) {
-      // Only overwrite if mirrored src or empty
       if (h.text.trim().isEmpty || h.text.trim() == src.text.trim()) {
         h.text = twinLabel();
         try {
@@ -2301,7 +2279,7 @@ EditableHotspot _ensureCrossFloorTwin(
     toRoomId: src.fromRoomId,
     latitude: src.isPaired ? -src.latitude : 0,
     longitude: src.isPaired ? _wrapLon180(src.longitude + 180) : 0,
-    text: twinLabel(), // use source-room label
+    text: twinLabel(),
     iconName: src.iconName,
     pairId: pid,
     isPaired: src.isPaired,

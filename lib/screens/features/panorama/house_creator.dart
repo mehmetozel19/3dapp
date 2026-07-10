@@ -8,6 +8,10 @@ import '../../../models/editor_models.dart';
 import 'room_editor_page.dart';
 import '../../../models/panorama_data.dart';
 
+
+
+
+
 class HouseCreatorScreen extends StatefulWidget {
   final PanoramaData? initialHouse;
   final int? houseIndex;
@@ -19,9 +23,10 @@ class HouseCreatorScreen extends StatefulWidget {
 }
 
 const double kControlHeight = 40.0;
-const double kControlFontSize = 14.0;
+const double kControlFontSize = 16.0;
 
 class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
+  static const String _kBatchConnectionPairId = 'batch_auto';
   final List<FloorEditor> _floors = (() {
     final floor = FloorEditor();
     floor.rooms.add(EditableRoom());
@@ -33,8 +38,6 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
   final TextEditingController _addressCtrl = TextEditingController(text: '');
   final TextEditingController _areaCtrl = TextEditingController(text: '');
   String _houseThumbPath = '';
-  GlobalKey<SliverAnimatedListState> _floorsKey =
-      GlobalKey<SliverAnimatedListState>();
   final List<bool> _floorExpanded = [false];
 
   late String _initialDigest;
@@ -47,72 +50,62 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
   PanoramaData? _draftHouse;
   int? _createdHouseIndex;
 
-  // --- NEW: tracking for reorder change indicators ---
   bool _showReorderIndicators = false;
   final Map<FloorEditor, int> _originalFloorOrder = {};
+
+  final Map<FloorEditor, Map<EditableRoom, int>> _originalRoomOrder = {};
 
   void _captureOriginalFloorOrder() {
     _originalFloorOrder
       ..clear()
       ..addEntries(_floors.asMap().entries.map(
-        (e) => MapEntry(e.value, e.key),
-      ));
+            (e) => MapEntry(e.value, e.key),
+          ));
   }
-  // ---------------------------------------------------
+
+  void _captureOriginalRoomOrder(FloorEditor floor) {
+    if (_originalRoomOrder.containsKey(floor)) return;
+    _originalRoomOrder[floor] = {
+      for (final e in floor.rooms.asMap().entries) e.value: e.key,
+    };
+  }
 
   void _addFloor() {
     final index = _floors.length;
     final newFloor = FloorEditor();
     newFloor.rooms.add(EditableRoom());
-    _floors.add(newFloor);
-    _floorExpanded.insert(index, false);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _floorsKey.currentState?.insertItem(
-        index,
-        duration: const Duration(milliseconds: 300),
-      );
-      setState(() {});
+
+    setState(() {
+      _floors.add(newFloor);
+      _floorExpanded.insert(index, false);
+
+      if (_showReorderIndicators) {
+        _originalFloorOrder[newFloor] = index;
+      } else {
+        _captureOriginalFloorOrder();
+      }
     });
-    // Ensure original order tracking includes newly added floor even after indicators shown.
-    if (_showReorderIndicators) {
-      _originalFloorOrder[newFloor] = index;
-    } else {
-      _captureOriginalFloorOrder();
-    }
   }
 
   void _removeFloor(int floorIdx) {
     if (_floors.length == 1) return;
-    final removed = _floors.removeAt(floorIdx);
-    if (floorIdx >= 0 && floorIdx < _floorExpanded.length) {
-      _floorExpanded.removeAt(floorIdx);
-    }
 
-    if (_floors.length == 1) {
-      setState(() {
-        _floorExpanded
-          ..clear()
-          ..addAll(List<bool>.filled(_floors.length, false));
-        _floorsKey = GlobalKey<SliverAnimatedListState>();
-      });
-    } else {
-      _floorsKey.currentState?.removeItem(
-        floorIdx,
-        (context, animation) => _buildAnimatedFloorTile(
-          context,
-          removed,
-          floorIdx,
-          animation,
-          interactive: false,
-        ),
-        duration: const Duration(milliseconds: 300),
-      );
-      setState(() {
-        _floorExpanded
-          ..clear()
-          ..addAll(List<bool>.filled(_floors.length, false));
-      });
-    }
+    final floorToRemove = _floors[floorIdx];
+
+    setState(() {
+      _floors.removeAt(floorIdx);
+      if (floorIdx >= 0 && floorIdx < _floorExpanded.length) {
+        _floorExpanded.removeAt(floorIdx);
+      }
+
+      _floorExpanded
+        ..clear()
+        ..addAll(List<bool>.filled(_floors.length, false));
+
+      _showReorderIndicators = false;
+      _captureOriginalFloorOrder();
+      _originalRoomOrder.remove(floorToRemove);
+    });
   }
 
   void _addRoom(int floorIdx) {
@@ -127,7 +120,6 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
   void _deleteRoom(int floorIdx, int roomIdx) {
     final floor = _floors[floorIdx];
 
-    // NEW: prevent deleting the last room on a floor
     if (floor.rooms.length <= 1) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Keep at least one room on each floor')),
@@ -173,7 +165,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
       _houseThumbPath,
       _floors,
     );
-    _captureOriginalFloorOrder(); // capture initial order
+    _captureOriginalFloorOrder();
   }
 
   void _loadFromPanoramaData(PanoramaData data) {
@@ -196,13 +188,14 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
         r.name = rd.name;
         r.imagePath = rd.imagePath;
         r.iconName = _iconNameFromIcon(rd.icon, fallback: 'circle_outlined');
-        r.description = rd.description; // NEW
+        r.description = rd.description;
         r.connectedRoomIds = List<int>.from(rd.connectedRoomIds);
-        // Optionally sync controllers if needed
+        r.presetId = rd.presetId;
+
         try {
           r.nameCtrl.text = r.name;
           r.imageCtrl.text = r.imagePath;
-          r.descCtrl.text = r.description; // NEW
+          r.descCtrl.text = r.description;
         } catch (_) {}
         floor.rooms.add(r);
       }
@@ -267,7 +260,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
       builder: (ctx) => AlertDialog(
         backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppStyles.cardRadius),
           side: BorderSide(
             color: AppStyles.border,
             width: AppStyles.borderWidth,
@@ -332,10 +325,8 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
           _floorExpanded
             ..clear()
             ..addAll(List<bool>.filled(_floors.length, false));
-
-          _floorsKey = GlobalKey<SliverAnimatedListState>();
         });
-        // NEW: push restored data into the store/draft so added/deleted rooms are reverted globally
+
         _syncStore();
         if (!mounted) return;
         Navigator.of(context).pop();
@@ -381,10 +372,8 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
         _floors,
       );
 
-      // --- CLEAR INDICATORS AFTER SAVE ---
       _showReorderIndicators = false;
       _captureOriginalFloorOrder();
-      // -----------------------------------
 
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -522,7 +511,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
   Widget build(BuildContext context) {
     final base = ThemeData.light();
     final themed = base.copyWith(
-      scaffoldBackgroundColor: Colors.white,
+      scaffoldBackgroundColor: AppStyles.surfaceMuted,
       appBarTheme: base.appBarTheme.copyWith(
         backgroundColor: Colors.transparent,
         foregroundColor: AppStyles.textPrimary,
@@ -552,40 +541,50 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
       dropdownMenuTheme: DropdownMenuThemeData(
         textStyle: TextStyle(color: AppStyles.textPrimary),
         menuStyle: MenuStyle(
-          backgroundColor: const WidgetStatePropertyAll(Colors.white),
+          backgroundColor: WidgetStatePropertyAll(AppStyles.surface),
           elevation: const WidgetStatePropertyAll(4),
           shape: WidgetStatePropertyAll(
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppStyles.cardRadius),
+            ),
           ),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: Colors.white,
+        fillColor: AppStyles.surface,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 12,
+          horizontal: 16,
+          vertical: 16,
         ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppStyles.cardRadius),
           borderSide: BorderSide(
             color: AppStyles.border,
             width: AppStyles.borderWidth,
           ),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppStyles.cardRadius),
           borderSide: BorderSide(
             color: AppStyles.border,
             width: AppStyles.borderWidth,
           ),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: AppStyles.accentActive, width: 1.2),
+          borderRadius: BorderRadius.circular(AppStyles.cardRadius),
+          borderSide: BorderSide(
+            color: AppStyles.textPrimary,
+            width: 1.5,
+          ),
         ),
         labelStyle: TextStyle(color: AppStyles.textSecondary),
-        hintStyle: TextStyle(color: AppStyles.textSecondary),
+        floatingLabelStyle: TextStyle(
+          color: AppStyles.textPrimary,
+          fontWeight: FontWeight.w600,
+        ),
+        hintStyle: TextStyle(color: AppStyles.textSecondary.withOpacity(0.5)),
+        prefixIconColor: AppStyles.textSecondary,
       ),
       chipTheme: base.chipTheme.copyWith(
         backgroundColor: AppStyles.surface,
@@ -593,7 +592,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
         side: BorderSide(color: AppStyles.border, width: AppStyles.borderWidth),
         labelStyle: TextStyle(color: AppStyles.textPrimary),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppStyles.cardRadius),
           side: BorderSide(
             color: AppStyles.border,
             width: AppStyles.borderWidth,
@@ -603,14 +602,14 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: AppStyles.textPrimary,
-          backgroundColor: Colors.white,
+          backgroundColor: AppStyles.surface,
           elevation: 0,
           side: BorderSide(
             color: AppStyles.border,
             width: AppStyles.borderWidth,
           ),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(AppStyles.cardRadius),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         ),
@@ -618,14 +617,14 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           foregroundColor: AppStyles.textPrimary,
-          backgroundColor: Colors.white,
+          backgroundColor: AppStyles.surface,
           elevation: 0,
           side: BorderSide(
             color: AppStyles.border,
             width: AppStyles.borderWidth,
           ),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(AppStyles.cardRadius),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         ),
@@ -635,7 +634,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
     return Theme(
       data: themed,
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: AppStyles.surfaceMuted,
         appBar: AppBar(
             automaticallyImplyLeading: false,
             title: const Text('House Creator')),
@@ -657,22 +656,29 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                   children: [
                     TextField(
                       controller: _titleCtrl,
-                      style: TextStyle(color: AppStyles.textPrimary),
+                      style: TextStyle(
+                        color: AppStyles.textPrimary,
+                        fontWeight: FontWeight.bold,
+                      ),
                       decoration: const InputDecoration(
                         labelText: 'House title *',
+                        prefixIcon: Icon(Icons.home_outlined),
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     TextField(
                       controller: _addressCtrl,
                       style: TextStyle(color: AppStyles.textPrimary),
-                      decoration: const InputDecoration(labelText: 'Address *'),
+                      decoration: const InputDecoration(
+                        labelText: 'Address *',
+                        prefixIcon: Icon(Icons.location_on_outlined),
+                      ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     TextField(
                       controller: _areaCtrl,
                       style: TextStyle(color: AppStyles.textPrimary),
-                      keyboardType: TextInputType.numberWithOptions(
+                      keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
                       inputFormatters: [
@@ -682,6 +688,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                       ],
                       decoration: const InputDecoration(
                         labelText: 'Area (m²) *',
+                        prefixIcon: Icon(Icons.aspect_ratio),
                       ),
                     ),
                   ],
@@ -690,37 +697,40 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
             ),
             const SliverToBoxAdapter(child: SizedBox(height: 12)),
             SliverToBoxAdapter(
-              child: ReorderableListView(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                buildDefaultDragHandles: false,
-                proxyDecorator: (child, index, animation) => child,
-                onReorder: (oldIndex, newIndex) {
-                  setState(() {
-                    if (newIndex > oldIndex) newIndex -= 1;
+              child: AnimatedSize(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+                alignment: Alignment.topCenter,
+                child: ReorderableListView(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  buildDefaultDragHandles: false,
+                  proxyDecorator: (child, index, animation) => child,
+                  onReorder: (oldIndex, newIndex) {
+                    setState(() {
+                      if (newIndex > oldIndex) newIndex -= 1;
 
-                    // Before first reorder capture original order
-                    if (!_showReorderIndicators) {
-                      _captureOriginalFloorOrder();
-                    }
+                      if (!_showReorderIndicators) {
+                        _captureOriginalFloorOrder();
+                      }
 
-                    final floor = _floors.removeAt(oldIndex);
-                    _floors.insert(newIndex, floor);
-                    final expanded = _floorExpanded.removeAt(oldIndex);
-                    _floorExpanded.insert(newIndex, expanded);
+                      final floor = _floors.removeAt(oldIndex);
+                      _floors.insert(newIndex, floor);
+                      final expanded = _floorExpanded.removeAt(oldIndex);
+                      _floorExpanded.insert(newIndex, expanded);
 
-                    // Enable indicators
-                    _showReorderIndicators = true;
-                  });
-                  _syncStore();
-                },
-                children: [
-                  for (int index = 0; index < _floors.length; index++)
-                    Container(
-                      key: ValueKey('floor-$index'),
-                      child: _buildFloorTile(context, _floors[index], index),
-                    ),
-                ],
+                      _showReorderIndicators = true;
+                    });
+                    _syncStore();
+                  },
+                  children: [
+                    for (int index = 0; index < _floors.length; index++)
+                      Container(
+                        key: ObjectKey(_floors[index]),
+                        child: _buildFloorTile(context, _floors[index], index),
+                      ),
+                  ],
+                ),
               ),
             ),
             const SliverToBoxAdapter(child: SizedBox(height: 72)),
@@ -767,7 +777,6 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                           _floorExpanded
                             ..clear()
                             ..addAll(List<bool>.filled(_floors.length, false));
-                          _floorsKey = GlobalKey<SliverAnimatedListState>();
                           _houseThumbPath = '';
                           _titleCtrl.text = 'My House';
                           _addressCtrl.text = '';
@@ -800,6 +809,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                     _WhiteButton.icon(
                       icon: Icons.check,
                       label: 'Save',
+                      isPrimary: true,
                       onPressed: () => _onSavePressed(),
                     ),
                 ],
@@ -812,7 +822,6 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
   }
 
   Future<void> _openRoomEditor(int fIdx, int rIdx) async {
-    // Ensure PanoramaData reflects the latest _floors before opening editor
     _syncStore();
 
     final store = HousesStore.instance;
@@ -822,7 +831,6 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
     } else if (_draftHouse != null) {
       panoramaDataToUse = _draftHouse!;
     } else {
-      // Fresh in-memory data for a new (unsaved) house
       panoramaDataToUse = PanoramaData()..replaceFromEditors(_floors);
     }
 
@@ -839,7 +847,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
       ),
     );
     setState(() {});
-    _syncStore(); // keep store up to date after returning as well
+    _syncStore();
   }
 
   Future<bool> confirmDeleteDialog(
@@ -854,9 +862,9 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
       context: context,
       barrierDismissible: true,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppStyles.surface,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppStyles.cardRadius),
           side: BorderSide(
             color: AppStyles.border,
             width: AppStyles.borderWidth,
@@ -899,88 +907,185 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
   Widget _buildRoomCard(int fIdx, int rIdx, EditableRoom room) {
     final floor = _floors[fIdx];
     final connCount = floor.hotspots.where((h) => h.fromRoomId == rIdx).length;
-
-    // NEW: can delete only if more than 1 room on this floor
     final bool canDeleteRoom = floor.rooms.length > 1;
 
-    return ListTile(
-      contentPadding: const EdgeInsets.fromLTRB(0.0, 8.0, 8.0, 0.0),
-      leading: _RoomIcon(iconName: room.iconName),
-      title: Text(
-        room.name.isEmpty ? 'Pano $rIdx' : room.name,
-        style: TextStyle(
-          color: AppStyles.textPrimary,
-          fontWeight: FontWeight.w600,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppStyles.cardRadius),
+        onTap: () => _openRoomEditor(fIdx, rIdx),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+          decoration: BoxDecoration(
+            color: AppStyles.surface,
+            borderRadius: BorderRadius.circular(AppStyles.cardRadius),
+            border: Border.all(
+              color: AppStyles.border,
+              width: AppStyles.borderWidth,
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () {},
+                child: ReorderableDragStartListener(
+                  index: rIdx,
+                  child: SizedBox(
+                    width: 36,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _buildRoomReorderIndicator(floor, room, rIdx),
+                        const SizedBox(height: 4),
+                        Icon(
+                          Icons.drag_handle,
+                          color: AppStyles.accentInactive,
+                          size: 20,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              _PanoPreviewBox(
+                imagePath: room.imagePath,
+                iconName: room.iconName,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            room.name.isEmpty ? 'Pano $rIdx' : room.name,
+                            style: TextStyle(
+                              color: AppStyles.textPrimary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (room.isBatchUpload)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppStyles.surfaceAccent,
+                              borderRadius: BorderRadius.circular(
+                                AppStyles.pillRadius,
+                              ),
+                              border: Border.all(
+                                color: AppStyles.border,
+                                width: AppStyles.borderWidth,
+                              ),
+                            ),
+                            child: Text(
+                              'Batch',
+                              style: TextStyle(
+                                color: AppStyles.textSecondary,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$connCount connection${connCount == 1 ? '' : 's'}',
+                      style: TextStyle(color: AppStyles.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: AppStyles.surfaceAccent,
+                  borderRadius: BorderRadius.circular(AppStyles.pillRadius),
+                ),
+                child: IconButton(
+                  icon: Icon(
+                    Icons.delete_outline,
+                    color: canDeleteRoom
+                        ? AppStyles.textSecondary
+                        : const Color.fromRGBO(0, 0, 0, 0.3),
+                  ),
+                  onPressed: canDeleteRoom
+                      ? () async {
+                          final ok = await confirmDeleteDialog(
+                            context,
+                            title: 'Delete pano',
+                            message:
+                                'This will remove this room and its connections.',
+                          );
+                          if (ok) _deleteRoom(fIdx, rIdx);
+                        }
+                      : null,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-      subtitle: Text(
-        '$connCount connection${connCount == 1 ? '' : 's'}',
-        style: TextStyle(color: AppStyles.textSecondary),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            tooltip: canDeleteRoom
-                ? 'Delete pano'
-                : 'Keep at least one room on this floor',
-            icon: Icon(
-              Icons.delete_outline,
-              color: canDeleteRoom
-                  ? Colors.redAccent
-                  : const Color.fromRGBO(0, 0, 0, 0.3),
-            ),
-            onPressed: canDeleteRoom
-                ? () async {
-                    final ok = await confirmDeleteDialog(
-                      context,
-                      title: 'Delete pano',
-                      message:
-                          'This will remove this room and its connections.',
-                    );
-                    if (ok) _deleteRoom(fIdx, rIdx);
-                  }
-                : null,
-          ),
-          const SizedBox(width: 4),
-          const Icon(Icons.chevron_right, size: 20),
-        ],
-      ),
-      onTap: () => _openRoomEditor(fIdx, rIdx),
     );
   }
 
-  Widget _buildAnimatedFloorTile(
-    BuildContext context,
-    FloorEditor floor,
-    int fIdx,
-    Animation<double> animation, {
-    bool interactive = true,
-  }) {
-    final curved = CurvedAnimation(parent: animation, curve: Curves.easeInOut);
-    return SizeTransition(
-      sizeFactor: curved,
-      child: FadeTransition(
-        opacity: curved,
-        child: _buildFloorTile(context, floor, fIdx, interactive: interactive),
-      ),
-    );
-  }
-
-  // --- helper: compact, monochrome indicator placed left of the card ---
   Widget _buildReorderIndicator(FloorEditor floor, int currentIndex) {
-    // Compute original index and delta
     final int? orig = _originalFloorOrder[floor];
     if (!_showReorderIndicators || orig == null) {
-      // Unchanged or indicators disabled => small circle
-      return const Icon(Icons.minimize, size: 16, color: Colors.black54);
+      return const Icon(Icons.minimize, size: 18, color: Colors.black54);
     }
 
-    final int delta = orig - currentIndex; // positive => moved up
+    final int delta = orig - currentIndex;
+    if (delta == 0) {
+      return const Icon(Icons.minimize, size: 18, color: Colors.black54);
+    }
+
+    final bool movedUp = delta > 0;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          movedUp ? Icons.arrow_upward : Icons.arrow_downward,
+          size: 16,
+          color: Colors.black54,
+        ),
+        Text(
+          '${delta.abs()}',
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: Colors.black54,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRoomReorderIndicator(
+      FloorEditor floor, EditableRoom room, int currentIndex) {
+    final origMap = _originalRoomOrder[floor];
+    if (!_showReorderIndicators || origMap == null) {
+      return const Icon(Icons.minimize, size: 16, color: Colors.black54);
+    }
+    final int? orig = origMap[room];
+    if (orig == null) {
+      return const Icon(Icons.minimize, size: 16, color: Colors.black54);
+    }
+    final int delta = orig - currentIndex;
     if (delta == 0) {
       return const Icon(Icons.minimize, size: 16, color: Colors.black54);
     }
-
     final bool movedUp = delta > 0;
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -995,7 +1100,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
           '${delta.abs()}',
           style: const TextStyle(
             fontSize: 12,
-            fontWeight: FontWeight.w700, // increased weight
+            fontWeight: FontWeight.w700,
             color: Colors.black54,
           ),
         ),
@@ -1014,9 +1119,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
         ? _floorExpanded[fIdx]
         : false;
 
-    // Build the card content (unchanged except we removed the in-title indicator)
     final card = Container(
-      // move horizontal spacing to the row padding; keep only vertical margin here
       margin: const EdgeInsets.symmetric(vertical: 6),
       decoration: BoxDecoration(
         color: AppStyles.surface,
@@ -1031,9 +1134,22 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
         children: [
           ReorderableDragStartListener(
             index: fIdx,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12.0, 20.0, 0.0, 20.0),
-              child: Icon(Icons.drag_handle, color: AppStyles.textSecondary),
+            child: SizedBox(
+              width: 40,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16.0, 10.0, 0.0, 10.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _buildReorderIndicator(floor, fIdx),
+                    const SizedBox(height: 4),
+                    Icon(
+                      Icons.drag_handle,
+                      color: AppStyles.accentInactive,
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
           Expanded(
@@ -1050,7 +1166,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                 ),
               ),
               child: ExpansionTile(
-                key: ValueKey('floor-$fIdx-${isExpanded ? 'open' : 'closed'}'),
+                key: ObjectKey(floor),
                 initiallyExpanded: isExpanded,
                 onExpansionChanged: interactive
                     ? (open) => setState(() {
@@ -1076,54 +1192,154 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    // indicator moved outside the card (left gutter)
                   ],
                 ),
                 subtitle: Text(
                   '${floor.rooms.length} panoramas • ${floor.hotspots.length} connections',
                   style: TextStyle(color: AppStyles.textSecondary),
                 ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      tooltip: 'Add pano',
-                      icon: Icon(
-                        Icons.meeting_room,
-                        color: AppStyles.textSecondary,
+                trailing: Container(
+                  decoration: BoxDecoration(
+                    color: AppStyles.surfaceAccent,
+                    borderRadius: BorderRadius.circular(AppStyles.pillRadius),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'Add pano',
+                        icon: Icon(
+                          Icons.meeting_room,
+                          color: AppStyles.textSecondary,
+                        ),
+                        onPressed: interactive ? () => _addRoom(fIdx) : null,
                       ),
-                      onPressed: interactive ? () => _addRoom(fIdx) : null,
-                    ),
-                    IconButton(
-                      tooltip: canDeleteFloor
-                          ? 'Delete Floor'
-                          : 'Keep at least one floor',
-                      icon: Icon(
-                        Icons.delete_outline,
-                        color: canDeleteFloor
-                            ? Colors.redAccent
-                            : const Color.fromRGBO(0, 0, 0, 0.3),
+                      IconButton(
+                        tooltip: canDeleteFloor
+                            ? 'Delete Floor'
+                            : 'Keep at least one floor',
+                        icon: Icon(
+                          Icons.delete_outline,
+                          color: canDeleteFloor
+                              ? AppStyles.textSecondary
+                              : const Color.fromRGBO(0, 0, 0, 0.3),
+                        ),
+                        onPressed: canDeleteFloor
+                            ? () async {
+                                final ok = await confirmDeleteDialog(
+                                  context,
+                                  title: 'Delete floor',
+                                  message:
+                                      'This will remove Floor $fIdx and all its rooms and connections.',
+                                );
+                                if (ok) _removeFloor(fIdx);
+                              }
+                            : null,
                       ),
-                      onPressed: canDeleteFloor
-                          ? () async {
-                              final ok = await confirmDeleteDialog(
-                                context,
-                                title: 'Delete floor',
-                                message:
-                                    'This will remove Floor $fIdx and all its rooms and connections.',
-                              );
-                              if (ok) _removeFloor(fIdx);
-                            }
-                          : null,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16.0, 8.0, 24.0, 8.0),
+                    padding: const EdgeInsets.fromLTRB(1.0, 8.0, 24.0, 8.0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        Row(
+                          children: [
+                            _WhiteButton.icon(
+                              icon: Icons.upload_file,
+                              label: 'Batch upload panoramas',
+                              onPressed: () async {
+                                print('Batch upload panoramas for floor $fIdx');
+                                final result =
+                                    await FilePicker.platform.pickFiles(
+                                  type: FileType.image,
+                                  allowMultiple: true,
+                                );
+                                final files =
+                                    result?.files ?? const <PlatformFile>[];
+                                if (files.isEmpty) return;
+
+                                files.sort((a, b) {
+                                  final an = (a.name).toLowerCase();
+                                  final bn = (b.name).toLowerCase();
+                                  return an.compareTo(bn);
+                                });
+
+                                setState(() {
+                                  if (floor.rooms.length == 1 &&
+                                      _isDefaultRoom(floor.rooms.first)) {
+                                    floor.rooms.removeAt(0);
+                                    floor.hotspots.clear();
+                                  }
+
+                                  final startIndex = floor.rooms.length;
+
+                                  for (var i = 0; i < files.length; i++) {
+                                    final f = files[i];
+                                    final path = f.path;
+                                    if (path == null || path.isEmpty) continue;
+                                    final room = EditableRoom();
+                                    room.isBatchUpload = true;
+                                    room.name = 'Pano ${floor.rooms.length}';
+                                    room.imagePath = path;
+                                    try {
+                                      room.nameCtrl.text = room.name;
+                                      room.imageCtrl.text = room.imagePath;
+                                    } catch (_) {}
+                                    floor.rooms.add(room);
+                                  }
+
+                                  final firstNew = startIndex;
+                                  final lastNew = floor.rooms.length - 1;
+
+                                  debugPrint(
+                                      '[BATCH] startIndex=$startIndex, firstNew=$firstNew, lastNew=$lastNew, totalRooms=${floor.rooms.length}');
+
+                                  if (firstNew > 0) {
+                                    final prev = firstNew - 1;
+                                    debugPrint(
+                                        '[BATCH] Connecting prev=$prev <-> firstNew=$firstNew');
+                                    _ensureBidirectionalConnection(
+                                      floor,
+                                      prev,
+                                      firstNew,
+                                    );
+                                  }
+
+                                  for (var r = firstNew; r < lastNew; r++) {
+                                    final a = r;
+                                    final b = r + 1;
+                                    debugPrint('[BATCH] Connecting $a <-> $b');
+                                    _ensureBidirectionalConnection(
+                                      floor,
+                                      a,
+                                      b,
+                                      pairId: _kBatchConnectionPairId,
+                                    );
+                                  }
+
+                                  debugPrint(
+                                      '[BATCH] After connecting: ${floor.hotspots.length} hotspots total');
+                                  for (final h in floor.hotspots) {
+                                    debugPrint(
+                                        '[BATCH]   hotspot: from=${h.fromRoomId} to=${h.toRoomId} changeFloor=${h.changeFloor}');
+                                  }
+
+                                  if (fIdx >= 0 &&
+                                      fIdx < _floorExpanded.length) {
+                                    _floorExpanded[fIdx] = true;
+                                  }
+                                });
+                                _syncStore();
+                                debugPrint(
+                                    '[BATCH] After _syncStore: floor.hotspots.length=${floor.hotspots.length}');
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
                         Text(
                           'Panoramas',
                           style: TextStyle(
@@ -1131,47 +1347,56 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                             color: AppStyles.textPrimary,
                           ),
                         ),
-                        AnimatedSize(
-                          duration: const Duration(milliseconds: 250),
-                          curve: Curves.easeInOut,
-                          alignment: Alignment.topCenter,
-                          child: floor.rooms.isEmpty
-                              ? Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 8,
+                        floor.rooms.isEmpty
+                            ? Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8),
+                                child: Text(
+                                  'No rooms yet. Add one with the button above.',
+                                  style: TextStyle(
+                                    color: AppStyles.textSecondary,
                                   ),
-                                  child: Text(
-                                    'No rooms yet. Add one with the button above.',
-                                    style: TextStyle(
-                                      color: AppStyles.textSecondary,
-                                    ),
-                                  ),
-                                )
-                              : Column(
-                                  key: ValueKey(floor.rooms.length),
-                                  children: [
-                                    ...List.generate(floor.rooms.length, (rIdx) {
-                                      final room = floor.rooms[rIdx];
-                                      return TweenAnimationBuilder<double>(
-                                        key: ValueKey(room),
-                                        duration: const Duration(
-                                          milliseconds: 220,
-                                        ),
-                                        curve: Curves.easeOut,
-                                        tween: Tween(begin: 0, end: 1),
-                                        builder: (context, t, child) => Opacity(
-                                          opacity: t,
-                                          child: Transform.translate(
-                                            offset: Offset(0, (1 - t) * 8),
-                                            child: child,
-                                          ),
-                                        ),
-                                        child: _buildRoomCard(fIdx, rIdx, room),
-                                      );
-                                    }),
-                                  ],
                                 ),
-                        ),
+                              )
+                            : ReorderableListView(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                buildDefaultDragHandles: false,
+                                proxyDecorator: (child, index, animation) =>
+                                    child,
+                                onReorder: (oldIndex, newIndex) {
+                                  setState(() {
+                                    if (newIndex > oldIndex) newIndex -= 1;
+
+                                    _captureOriginalRoomOrder(floor);
+                                    _showReorderIndicators = true;
+
+                                    final moved =
+                                        floor.rooms.removeAt(oldIndex);
+                                    floor.rooms.insert(newIndex, moved);
+
+                                    _remapRoomIndicesForFloor(
+                                        floor, oldIndex, newIndex);
+                                    _remapConnectedRoomIdsForFloor(
+                                        floor, oldIndex, newIndex);
+
+                                    _rebuildBatchConnections(floor);
+                                  });
+                                  _syncStore();
+                                },
+                                children: [
+                                  for (int rIdx = 0;
+                                      rIdx < floor.rooms.length;
+                                      rIdx++)
+                                    Container(
+                                      key: ObjectKey(floor.rooms[rIdx]),
+                                      margin: const EdgeInsets.symmetric(
+                                          vertical: 6),
+                                      child: _buildRoomCard(
+                                          fIdx, rIdx, floor.rooms[rIdx]),
+                                    ),
+                                ],
+                              ),
                       ],
                     ),
                   ),
@@ -1183,44 +1408,296 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
       ),
     );
 
-    // Row: left gutter indicator + card
     return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 0, 12, 0),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Left gutter indicator, outside the card, vertically centered
-            SizedBox(
-              width: 34,
-              child: Center(child: _buildReorderIndicator(floor, fIdx)),
-            ),
-            const SizedBox(width: 6), // increased spacing between indicator and card
-            // Card
-            Expanded(child: card),
-          ],
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+      child: card,
+    );
+  }
+
+  String _basenameNoExt(String name) {
+    final dot = name.lastIndexOf('.');
+    if (dot <= 0) return name;
+    return name.substring(0, dot);
+  }
+
+  bool _hasHotspot(FloorEditor floor, int from, int to) {
+    return floor.hotspots.any(
+      (h) => !h.changeFloor && h.fromRoomId == from && h.toRoomId == to,
+    );
+  }
+
+  bool _isDefaultRoom(EditableRoom room) {
+    return room.imagePath.isEmpty &&
+        (room.name.isEmpty || room.name.startsWith('Pano ')) &&
+        room.iconName == 'circle_outlined' &&
+        room.description.isEmpty &&
+        room.presetId == -1 &&
+        room.connectedRoomIds.isEmpty;
+  }
+
+  void _ensureConnection(
+    FloorEditor floor,
+    int from,
+    int to, {
+    double latitude = 0.0,
+    double longitude = 25.0,
+    String text = '',
+    String iconName = 'arrow_forward',
+    String? pairId,
+  }) {
+    if (_hasHotspot(floor, from, to)) {
+      debugPrint(
+          '[BATCH] _ensureConnection SKIP (already exists): $from -> $to');
+      return;
+    }
+    debugPrint(
+        '[BATCH] _ensureConnection ADD: $from -> $to (icon=$iconName, lon=$longitude)');
+    floor.hotspots.add(
+      EditableHotspot(
+        fromRoomId: from,
+        toRoomId: to,
+        latitude: latitude,
+        longitude: longitude,
+        text: text,
+        iconName: iconName,
+        pairId: pairId,
+      ),
+    );
+  }
+
+  void _ensureBidirectionalConnection(
+    FloorEditor floor,
+    int a,
+    int b, {
+    String? pairId,
+  }) {
+    _ensureConnection(
+      floor,
+      a,
+      b,
+      longitude: 25.0,
+      iconName: 'arrow_forward',
+      pairId: pairId,
+    );
+    _ensureConnection(
+      floor,
+      b,
+      a,
+      longitude: -25.0,
+      iconName: 'arrow_back',
+      pairId: pairId,
+    );
+
+    if (!floor.rooms[a].connectedRoomIds.contains(b)) {
+      floor.rooms[a].connectedRoomIds.add(b);
+    }
+    if (!floor.rooms[b].connectedRoomIds.contains(a)) {
+      floor.rooms[b].connectedRoomIds.add(a);
+    }
+  }
+
+  void _rebuildBatchConnections(FloorEditor floor) {
+    floor.hotspots.removeWhere(
+      (h) => h.pairId == _kBatchConnectionPairId,
+    );
+
+    final batchIndices = <int>[];
+    for (var i = 0; i < floor.rooms.length; i++) {
+      if (floor.rooms[i].isBatchUpload) {
+        batchIndices.add(i);
+      }
+    }
+
+    if (batchIndices.length > 1) {
+      for (var i = 0; i < batchIndices.length - 1; i++) {
+        _ensureBidirectionalConnection(
+          floor,
+          batchIndices[i],
+          batchIndices[i + 1],
+          pairId: _kBatchConnectionPairId,
+        );
+      }
+    }
+
+    _rebuildConnectedRoomIdsFromHotspots(floor);
+  }
+
+  void _rebuildConnectedRoomIdsFromHotspots(FloorEditor floor) {
+    for (final room in floor.rooms) {
+      room.connectedRoomIds = [];
+    }
+
+    for (var rIdx = 0; rIdx < floor.rooms.length; rIdx++) {
+      final conns = floor.hotspots
+          .where((h) => h.fromRoomId == rIdx && !(h.changeFloor == true))
+          .map((h) => h.toRoomId)
+          .where((to) => to >= 0 && to < floor.rooms.length)
+          .toSet()
+          .toList()
+        ..sort();
+      floor.rooms[rIdx].connectedRoomIds = conns;
+    }
+  }
+
+  void _remapRoomIndicesForFloor(
+      FloorEditor floor, int oldIndex, int newIndex) {
+    for (final h in floor.hotspots) {
+      if (h.fromRoomId == oldIndex) {
+        h.fromRoomId = newIndex;
+      } else if (oldIndex < newIndex) {
+        if (h.fromRoomId > oldIndex && h.fromRoomId <= newIndex) {
+          h.fromRoomId -= 1;
+        }
+      } else if (oldIndex > newIndex) {
+        if (h.fromRoomId >= newIndex && h.fromRoomId < oldIndex) {
+          h.fromRoomId += 1;
+        }
+      }
+
+      if (h.toRoomId == oldIndex) {
+        h.toRoomId = newIndex;
+      } else if (oldIndex < newIndex) {
+        if (h.toRoomId > oldIndex && h.toRoomId <= newIndex) {
+          h.toRoomId -= 1;
+        }
+      } else if (oldIndex > newIndex) {
+        if (h.toRoomId >= newIndex && h.toRoomId < oldIndex) {
+          h.toRoomId += 1;
+        }
+      }
+    }
+  }
+
+  void _remapConnectedRoomIdsForFloor(
+      FloorEditor floor, int oldIndex, int newIndex) {
+    for (final r in floor.rooms) {
+      r.connectedRoomIds = r.connectedRoomIds.map((id) {
+        if (id == oldIndex) return newIndex;
+        if (oldIndex < newIndex) {
+          if (id > oldIndex && id <= newIndex) return id - 1;
+        } else if (oldIndex > newIndex) {
+          if (id >= newIndex && id < oldIndex) return id + 1;
+        }
+        return id;
+      }).toList();
+    }
+  }
+}
+
+class _PanoPreviewBox extends StatelessWidget {
+  final String imagePath;
+  final String iconName;
+  const _PanoPreviewBox({
+    required this.imagePath,
+    required this.iconName,
+  });
+
+  bool get _hasImage => imagePath.isNotEmpty && File(imagePath).existsSync();
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: _hasImage
+          ? () => showDialog(
+                context: context,
+                builder: (_) => _ImagePreviewDialog(imagePath: imagePath),
+              )
+          : null,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppStyles.cardRadius),
+        child: SizedBox(
+          width: 56,
+          height: 56,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: _hasImage
+                    ? Image.file(
+                        File(imagePath),
+                        fit: BoxFit.cover,
+                      )
+                    : Container(
+                        color: AppStyles.accentInactive.withOpacity(0.2),
+                        child: Icon(
+                          Icons.panorama,
+                          color: AppStyles.textSecondary,
+                          size: 24,
+                        ),
+                      ),
+              ),
+              Positioned(
+                top: 2,
+                right: 2,
+                child: Container(
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: const Color.fromRGBO(255, 255, 255, 0.85),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Icon(
+                    kIconCatalog[iconName] ?? Icons.circle_outlined,
+                    color: AppStyles.textPrimary,
+                    size: 14,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _RoomIcon extends StatelessWidget {
-  final String iconName;
-  const _RoomIcon({required this.iconName});
+class _ImagePreviewDialog extends StatelessWidget {
+  final String imagePath;
+  const _ImagePreviewDialog({required this.imagePath});
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        width: 48,
-        height: 48,
-        color: Colors.grey.shade200,
-        child: Icon(
-          kIconCatalog[iconName] ?? Icons.circle_outlined,
-          color: Colors.grey.shade700,
-        ),
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.all(16),
+      child: Stack(
+        children: [
+          Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(AppStyles.cardRadius),
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: Image.file(
+                  File(imagePath),
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 0,
+            right: 0,
+            child: GestureDetector(
+              onTap: () => Navigator.of(context).pop(),
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: const Color.fromRGBO(255, 255, 255, 0.9),
+                  borderRadius: BorderRadius.circular(AppStyles.cardRadius),
+                  border: Border.all(
+                    color: AppStyles.border,
+                    width: AppStyles.borderWidth,
+                  ),
+                ),
+                child: Icon(
+                  Icons.close,
+                  size: 20,
+                  color: AppStyles.textPrimary,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1244,11 +1721,11 @@ class _ThumbnailBox extends StatelessWidget {
           final p = result?.files.single.path;
           if (p != null) onPick(p);
         },
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppStyles.cardRadius),
         child: Container(
           decoration: BoxDecoration(
             color: AppStyles.surface,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(AppStyles.cardRadius),
             border: Border.all(
               color: AppStyles.border,
               width: AppStyles.borderWidth,
@@ -1284,7 +1761,7 @@ class _ThumbnailBox extends StatelessWidget {
                 child: Container(
                   decoration: BoxDecoration(
                     color: const Color.fromRGBO(255, 255, 255, 0.9),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(AppStyles.cardRadius),
                     border: Border.all(
                       color: AppStyles.border,
                       width: AppStyles.borderWidth,
@@ -1292,8 +1769,8 @@ class _ThumbnailBox extends StatelessWidget {
                   ),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
+                      horizontal: 12,
+                      vertical: 8,
                     ),
                     child: Row(
                       children: [
@@ -1324,11 +1801,13 @@ class _WhiteButton extends StatefulWidget {
   final IconData icon;
   final String label;
   final VoidCallback onPressed;
+  final bool isPrimary;
 
   const _WhiteButton.icon({
     required this.icon,
     required this.label,
     required this.onPressed,
+    this.isPrimary = false,
   });
 
   @override
@@ -1341,12 +1820,15 @@ class _WhiteButtonState extends State<_WhiteButton> {
 
   @override
   Widget build(BuildContext context) {
-    final bg = Colors.white;
+    final bg = widget.isPrimary ? AppStyles.textPrimary : AppStyles.surface;
+
+    final fg = widget.isPrimary ? AppStyles.surface : AppStyles.textPrimary;
+
     final border = Border.all(
-      color: AppStyles.border,
+      color: widget.isPrimary ? AppStyles.textPrimary : AppStyles.border,
       width: AppStyles.borderWidth,
     );
-    final radius = BorderRadius.circular(12);
+    final radius = BorderRadius.circular(AppStyles.cardRadius);
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
@@ -1359,20 +1841,29 @@ class _WhiteButtonState extends State<_WhiteButton> {
         onTap: widget.onPressed,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color: _pressed ? bg.withOpacity(0.95) : bg,
             borderRadius: radius,
             border: border,
+            boxShadow: widget.isPrimary && _hover
+                ? [
+                    BoxShadow(
+                      color: AppStyles.textPrimary.withOpacity(0.2),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
+                    )
+                  ]
+                : null,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(widget.icon, size: 16, color: AppStyles.textPrimary),
+              Icon(widget.icon, size: 16, color: fg),
               const SizedBox(width: 6),
               Text(
                 widget.label,
-                style: TextStyle(color: AppStyles.textPrimary),
+                style: TextStyle(color: fg, fontWeight: FontWeight.w600),
               ),
             ],
           ),
@@ -1446,7 +1937,8 @@ extension DeepCopyEditableRoom on EditableRoom {
     copy.name = name;
     copy.iconName = iconName;
     copy.imagePath = imagePath;
-    copy.description = description; // NEW
+    copy.description = description;
+    copy.isBatchUpload = isBatchUpload;
     copy.connectedRoomIds = List<int>.from(connectedRoomIds);
     return copy;
   }
