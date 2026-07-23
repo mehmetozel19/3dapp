@@ -1,16 +1,301 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'dart:io' show File;
+import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:image/image.dart' as img;
+import 'package:tflite_flutter/tflite_flutter.dart';
+
 import '../../../models/houses_store.dart';
 import '../../../features/panorama/theme/ui_styles.dart';
 import '../../../models/editor_models.dart';
 import 'room_editor_page.dart';
 import '../../../models/panorama_data.dart';
 
+class AIClassifier {
+
+  Interpreter? _interpreter;
+
+
+  final List<String> labels = [
+    'backyard',
+    'bathroom',
+    'bedroom',
+    'frontyard',
+    'kitchen',
+    'livingRoom'
+  ];
 
 
 
+  // -----------------------------
+  // MODEL YÜKLE
+  // -----------------------------
+  Future<void> loadModel() async {
+
+    if (_interpreter != null) return;
+
+
+    try {
+
+      _interpreter =
+      await Interpreter.fromAsset(
+          'assets/room_model.tflite'
+      );
+
+
+      debugPrint("MODEL YÜKLENDİ");
+
+
+      debugPrint(
+          "INPUT SHAPE : "
+              "${_interpreter!
+              .getInputTensor(0)
+              .shape}"
+      );
+
+
+      debugPrint(
+          "INPUT TYPE : "
+              "${_interpreter!
+              .getInputTensor(0)
+              .type}"
+      );
+
+
+      debugPrint(
+          "OUTPUT SHAPE : "
+              "${_interpreter!
+              .getOutputTensor(0)
+              .shape}"
+      );
+
+
+      debugPrint(
+          "OUTPUT TYPE : "
+              "${_interpreter!
+              .getOutputTensor(0)
+              .type}"
+      );
+
+
+
+    } catch(e){
+
+      debugPrint(
+          "Model yükleme hatası: $e"
+      );
+
+    }
+
+  }
+
+
+
+
+
+  // -----------------------------
+  // RESİM SINIFLANDIR
+  // -----------------------------
+  Future<String> classifyImage(
+      String imagePath
+      ) async {
+
+
+    await loadModel();
+
+
+    if(_interpreter == null){
+
+      return "Model yok";
+
+    }
+
+
+
+    // -------------------------
+    // RESİM OKUMA
+    // -------------------------
+
+    final bytes =
+    File(imagePath)
+        .readAsBytesSync();
+
+
+    img.Image? image =
+    img.decodeImage(bytes);
+
+
+
+    if(image == null){
+
+      return "Resim okunamadı";
+
+    }
+
+
+
+    // Python:
+    // cv2.resize(img_rgb,(224,224))
+
+    final resized =
+    img.copyResize(
+      image,
+      width:224,
+      height:224,
+      interpolation:
+      img.Interpolation.linear,
+    );
+
+
+
+
+    // -------------------------
+    // INPUT TENSOR
+    // Python:
+    // float32
+    // 0-255
+    // [1,224,224,3]
+    // -------------------------
+
+
+    final input =
+    List.generate(
+      1,
+          (_) =>
+          List.generate(
+            224,
+                (y)=>
+                List.generate(
+                  224,
+                      (x){
+
+
+                    final pixel =
+                    resized.getPixel(x,y);
+
+
+
+                    return [
+
+                      pixel.r.toDouble(),
+
+                      pixel.g.toDouble(),
+
+                      pixel.b.toDouble(),
+
+
+                    ];
+
+
+                  },
+                ),
+          ),
+    );
+
+
+
+
+
+    // -------------------------
+    // OUTPUT
+    // -------------------------
+
+
+    final output =
+    List.generate(
+      1,
+          (_) =>
+          List.filled(
+              labels.length,
+              0.0
+          ),
+    );
+
+
+
+
+    // MODEL ÇALIŞTIR
+
+    _interpreter!.run(
+        input,
+        output
+    );
+
+
+
+
+
+    final result =
+    List<double>.from(
+        output[0]
+    );
+
+
+
+    debugPrint("------------------");
+
+
+    for(int i=0;i<labels.length;i++){
+
+      debugPrint(
+          "${labels[i]} : "
+              "${result[i]}"
+      );
+
+    }
+
+
+
+    // -------------------------
+    // MAX BUL
+    // -------------------------
+
+    int index=0;
+
+
+    for(int i=1;i<result.length;i++){
+
+      if(result[i]>result[index]){
+
+        index=i;
+
+      }
+
+    }
+
+
+
+    double confidence =
+        result[index]*100;
+
+
+
+    debugPrint(
+        "TAHMİN : "
+            "${labels[index]}"
+            "  %"
+            "${confidence.toStringAsFixed(2)}"
+    );
+
+
+
+    return labels[index];
+
+  }
+
+
+
+
+
+  void dispose(){
+
+    _interpreter?.close();
+
+  }
+
+
+}
 
 class HouseCreatorScreen extends StatefulWidget {
   final PanoramaData? initialHouse;
@@ -26,6 +311,8 @@ const double kControlHeight = 40.0;
 const double kControlFontSize = 16.0;
 
 class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
+  final AIClassifier _aiClassifier = AIClassifier();
+
   static const String _kBatchConnectionPairId = 'batch_auto';
   final List<FloorEditor> _floors = (() {
     final floor = FloorEditor();
@@ -60,7 +347,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
       ..clear()
       ..addEntries(_floors.asMap().entries.map(
             (e) => MapEntry(e.value, e.key),
-          ));
+      ));
   }
 
   void _captureOriginalRoomOrder(FloorEditor floor) {
@@ -136,7 +423,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
           .toList();
     }
     floor.hotspots.removeWhere(
-      (h) => h.fromRoomId == roomIdx || h.toRoomId == roomIdx,
+          (h) => h.fromRoomId == roomIdx || h.toRoomId == roomIdx,
     );
     for (final h in floor.hotspots) {
       if (h.fromRoomId > roomIdx) h.fromRoomId -= 1;
@@ -149,6 +436,8 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
   @override
   void initState() {
     super.initState();
+    _aiClassifier.loadModel();
+
     if (widget.initialHouse != null) {
       _loadFromPanoramaData(widget.initialHouse!);
     } else {
@@ -166,6 +455,12 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
       _floors,
     );
     _captureOriginalFloorOrder();
+  }
+
+  @override
+  void dispose() {
+    _aiClassifier.dispose();
+    super.dispose();
   }
 
   void _loadFromPanoramaData(PanoramaData data) {
@@ -238,9 +533,9 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
       'rooms': _floors
           .map(
             (f) => f.rooms
-                .map((r) => '${r.name}|${r.iconName}|${r.imagePath}')
-                .toList(),
-          )
+            .map((r) => '${r.name}|${r.iconName}|${r.imagePath}')
+            .toList(),
+      )
           .toList(),
     };
     return data.toString();
@@ -319,7 +614,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
             _titleCtrl,
             _addressCtrl,
             _areaCtrl,
-            (v) => _houseThumbPath = v,
+                (v) => _houseThumbPath = v,
             _floors,
           );
           _floorExpanded
@@ -437,9 +732,9 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
   }
 
   String _iconNameFromIcon(
-    IconData icon, {
-    String fallback = 'circle_outlined',
-  }) {
+      IconData icon, {
+        String fallback = 'circle_outlined',
+      }) {
     for (final entry in kIconCatalog.entries) {
       final v = entry.value;
       if (v.codePoint == icon.codePoint && v.fontFamily == icon.fontFamily) {
@@ -757,7 +1052,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                         context,
                         title: 'Delete house',
                         message:
-                            'This will remove all floors, rooms, and connections.',
+                        'This will remove all floors, rooms, and connections.',
                         confirmLabel: 'Delete',
                         confirmIcon: Icons.delete_outline,
                       );
@@ -851,13 +1146,13 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
   }
 
   Future<bool> confirmDeleteDialog(
-    BuildContext context, {
-    required String title,
-    required String message,
-    String confirmLabel = 'Delete',
-    String cancelLabel = 'Cancel',
-    IconData confirmIcon = Icons.delete_outline,
-  }) async {
+      BuildContext context, {
+        required String title,
+        required String message,
+        String confirmLabel = 'Delete',
+        String cancelLabel = 'Cancel',
+        IconData confirmIcon = Icons.delete_outline,
+      }) async {
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: true,
@@ -1022,14 +1317,14 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                   ),
                   onPressed: canDeleteRoom
                       ? () async {
-                          final ok = await confirmDeleteDialog(
-                            context,
-                            title: 'Delete pano',
-                            message:
-                                'This will remove this room and its connections.',
-                          );
-                          if (ok) _deleteRoom(fIdx, rIdx);
-                        }
+                    final ok = await confirmDeleteDialog(
+                      context,
+                      title: 'Delete pano',
+                      message:
+                      'This will remove this room and its connections.',
+                    );
+                    if (ok) _deleteRoom(fIdx, rIdx);
+                  }
                       : null,
                 ),
               ),
@@ -1109,11 +1404,11 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
   }
 
   Widget _buildFloorTile(
-    BuildContext context,
-    FloorEditor floor,
-    int fIdx, {
-    bool interactive = true,
-  }) {
+      BuildContext context,
+      FloorEditor floor,
+      int fIdx, {
+        bool interactive = true,
+      }) {
     final canDeleteFloor = interactive && _floors.length > 1;
     final isExpanded = (fIdx >= 0 && fIdx < _floorExpanded.length)
         ? _floorExpanded[fIdx]
@@ -1170,10 +1465,10 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                 initiallyExpanded: isExpanded,
                 onExpansionChanged: interactive
                     ? (open) => setState(() {
-                          if (fIdx >= 0 && fIdx < _floorExpanded.length) {
-                            _floorExpanded[fIdx] = open;
-                          }
-                        })
+                  if (fIdx >= 0 && fIdx < _floorExpanded.length) {
+                    _floorExpanded[fIdx] = open;
+                  }
+                })
                     : null,
                 backgroundColor: Colors.transparent,
                 collapsedBackgroundColor: Colors.transparent,
@@ -1226,14 +1521,14 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                         ),
                         onPressed: canDeleteFloor
                             ? () async {
-                                final ok = await confirmDeleteDialog(
-                                  context,
-                                  title: 'Delete floor',
-                                  message:
-                                      'This will remove Floor $fIdx and all its rooms and connections.',
-                                );
-                                if (ok) _removeFloor(fIdx);
-                              }
+                          final ok = await confirmDeleteDialog(
+                            context,
+                            title: 'Delete floor',
+                            message:
+                            'This will remove Floor $fIdx and all its rooms and connections.',
+                          );
+                          if (ok) _removeFloor(fIdx);
+                        }
                             : null,
                       ),
                     ],
@@ -1251,9 +1546,8 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                               icon: Icons.upload_file,
                               label: 'Batch upload panoramas',
                               onPressed: () async {
-                                print('Batch upload panoramas for floor $fIdx');
                                 final result =
-                                    await FilePicker.platform.pickFiles(
+                                await FilePicker.platform.pickFiles(
                                   type: FileType.image,
                                   allowMultiple: true,
                                 );
@@ -1273,34 +1567,40 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                                     floor.rooms.removeAt(0);
                                     floor.hotspots.clear();
                                   }
+                                });
 
-                                  final startIndex = floor.rooms.length;
+                                final startIndex = floor.rooms.length;
 
-                                  for (var i = 0; i < files.length; i++) {
-                                    final f = files[i];
-                                    final path = f.path;
-                                    if (path == null || path.isEmpty) continue;
-                                    final room = EditableRoom();
-                                    room.isBatchUpload = true;
-                                    room.name = 'Pano ${floor.rooms.length}';
-                                    room.imagePath = path;
-                                    try {
-                                      room.nameCtrl.text = room.name;
-                                      room.imageCtrl.text = room.imagePath;
-                                    } catch (_) {}
-                                    floor.rooms.add(room);
+                                for (var f in files) {
+                                  final path = f.path;
+                                  if (path == null || path.isEmpty) continue;
+
+                                  final room = EditableRoom();
+                                  room.isBatchUpload = true;
+                                  room.imagePath = path;
+                                  room.imageCtrl.text = path;
+
+                                  String predictedName = 'backyard';
+                                  try {
+                                    predictedName = await _aiClassifier.classifyImage(path);
+                                  } catch (e) {
+                                    debugPrint("AI Tahmin hatası: $e");
                                   }
 
-                                  final firstNew = startIndex;
-                                  final lastNew = floor.rooms.length - 1;
+                                  room.name = predictedName;
+                                  room.nameCtrl.text = predictedName;
 
-                                  debugPrint(
-                                      '[BATCH] startIndex=$startIndex, firstNew=$firstNew, lastNew=$lastNew, totalRooms=${floor.rooms.length}');
+                                  setState(() {
+                                    floor.rooms.add(room);
+                                  });
+                                }
+
+                                setState(() {
+                                  final lastNew = floor.rooms.length - 1;
+                                  final firstNew = startIndex;
 
                                   if (firstNew > 0) {
                                     final prev = firstNew - 1;
-                                    debugPrint(
-                                        '[BATCH] Connecting prev=$prev <-> firstNew=$firstNew');
                                     _ensureBidirectionalConnection(
                                       floor,
                                       prev,
@@ -1309,22 +1609,12 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                                   }
 
                                   for (var r = firstNew; r < lastNew; r++) {
-                                    final a = r;
-                                    final b = r + 1;
-                                    debugPrint('[BATCH] Connecting $a <-> $b');
                                     _ensureBidirectionalConnection(
                                       floor,
-                                      a,
-                                      b,
+                                      r,
+                                      r + 1,
                                       pairId: _kBatchConnectionPairId,
                                     );
-                                  }
-
-                                  debugPrint(
-                                      '[BATCH] After connecting: ${floor.hotspots.length} hotspots total');
-                                  for (final h in floor.hotspots) {
-                                    debugPrint(
-                                        '[BATCH]   hotspot: from=${h.fromRoomId} to=${h.toRoomId} changeFloor=${h.changeFloor}');
                                   }
 
                                   if (fIdx >= 0 &&
@@ -1333,8 +1623,6 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                                   }
                                 });
                                 _syncStore();
-                                debugPrint(
-                                    '[BATCH] After _syncStore: floor.hotspots.length=${floor.hotspots.length}');
                               },
                             ),
                           ],
@@ -1349,54 +1637,54 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
                         ),
                         floor.rooms.isEmpty
                             ? Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 8),
-                                child: Text(
-                                  'No rooms yet. Add one with the button above.',
-                                  style: TextStyle(
-                                    color: AppStyles.textSecondary,
-                                  ),
-                                ),
-                              )
+                          padding:
+                          const EdgeInsets.symmetric(vertical: 8),
+                          child: Text(
+                            'No rooms yet. Add one with the button above.',
+                            style: TextStyle(
+                              color: AppStyles.textSecondary,
+                            ),
+                          ),
+                        )
                             : ReorderableListView(
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                buildDefaultDragHandles: false,
-                                proxyDecorator: (child, index, animation) =>
-                                    child,
-                                onReorder: (oldIndex, newIndex) {
-                                  setState(() {
-                                    if (newIndex > oldIndex) newIndex -= 1;
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          buildDefaultDragHandles: false,
+                          proxyDecorator: (child, index, animation) =>
+                          child,
+                          onReorder: (oldIndex, newIndex) {
+                            setState(() {
+                              if (newIndex > oldIndex) newIndex -= 1;
 
-                                    _captureOriginalRoomOrder(floor);
-                                    _showReorderIndicators = true;
+                              _captureOriginalRoomOrder(floor);
+                              _showReorderIndicators = true;
 
-                                    final moved =
-                                        floor.rooms.removeAt(oldIndex);
-                                    floor.rooms.insert(newIndex, moved);
+                              final moved =
+                              floor.rooms.removeAt(oldIndex);
+                              floor.rooms.insert(newIndex, moved);
 
-                                    _remapRoomIndicesForFloor(
-                                        floor, oldIndex, newIndex);
-                                    _remapConnectedRoomIdsForFloor(
-                                        floor, oldIndex, newIndex);
+                              _remapRoomIndicesForFloor(
+                                  floor, oldIndex, newIndex);
+                              _remapConnectedRoomIdsForFloor(
+                                  floor, oldIndex, newIndex);
 
-                                    _rebuildBatchConnections(floor);
-                                  });
-                                  _syncStore();
-                                },
-                                children: [
-                                  for (int rIdx = 0;
-                                      rIdx < floor.rooms.length;
-                                      rIdx++)
-                                    Container(
-                                      key: ObjectKey(floor.rooms[rIdx]),
-                                      margin: const EdgeInsets.symmetric(
-                                          vertical: 6),
-                                      child: _buildRoomCard(
-                                          fIdx, rIdx, floor.rooms[rIdx]),
-                                    ),
-                                ],
+                              _rebuildBatchConnections(floor);
+                            });
+                            _syncStore();
+                          },
+                          children: [
+                            for (int rIdx = 0;
+                            rIdx < floor.rooms.length;
+                            rIdx++)
+                              Container(
+                                key: ObjectKey(floor.rooms[rIdx]),
+                                margin: const EdgeInsets.symmetric(
+                                    vertical: 6),
+                                child: _buildRoomCard(
+                                    fIdx, rIdx, floor.rooms[rIdx]),
                               ),
+                          ],
+                        ),
                       ],
                     ),
                   ),
@@ -1414,15 +1702,9 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
     );
   }
 
-  String _basenameNoExt(String name) {
-    final dot = name.lastIndexOf('.');
-    if (dot <= 0) return name;
-    return name.substring(0, dot);
-  }
-
   bool _hasHotspot(FloorEditor floor, int from, int to) {
     return floor.hotspots.any(
-      (h) => !h.changeFloor && h.fromRoomId == from && h.toRoomId == to,
+          (h) => !h.changeFloor && h.fromRoomId == from && h.toRoomId == to,
     );
   }
 
@@ -1436,22 +1718,16 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
   }
 
   void _ensureConnection(
-    FloorEditor floor,
-    int from,
-    int to, {
-    double latitude = 0.0,
-    double longitude = 25.0,
-    String text = '',
-    String iconName = 'arrow_forward',
-    String? pairId,
-  }) {
-    if (_hasHotspot(floor, from, to)) {
-      debugPrint(
-          '[BATCH] _ensureConnection SKIP (already exists): $from -> $to');
-      return;
-    }
-    debugPrint(
-        '[BATCH] _ensureConnection ADD: $from -> $to (icon=$iconName, lon=$longitude)');
+      FloorEditor floor,
+      int from,
+      int to, {
+        double latitude = 0.0,
+        double longitude = 25.0,
+        String text = '',
+        String iconName = 'arrow_forward',
+        String? pairId,
+      }) {
+    if (_hasHotspot(floor, from, to)) return;
     floor.hotspots.add(
       EditableHotspot(
         fromRoomId: from,
@@ -1466,11 +1742,11 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
   }
 
   void _ensureBidirectionalConnection(
-    FloorEditor floor,
-    int a,
-    int b, {
-    String? pairId,
-  }) {
+      FloorEditor floor,
+      int a,
+      int b, {
+        String? pairId,
+      }) {
     _ensureConnection(
       floor,
       a,
@@ -1498,7 +1774,7 @@ class _HouseCreatorScreenState extends State<HouseCreatorScreen> {
 
   void _rebuildBatchConnections(FloorEditor floor) {
     floor.hotspots.removeWhere(
-      (h) => h.pairId == _kBatchConnectionPairId,
+          (h) => h.pairId == _kBatchConnectionPairId,
     );
 
     final batchIndices = <int>[];
@@ -1599,9 +1875,9 @@ class _PanoPreviewBox extends StatelessWidget {
     return GestureDetector(
       onTap: _hasImage
           ? () => showDialog(
-                context: context,
-                builder: (_) => _ImagePreviewDialog(imagePath: imagePath),
-              )
+        context: context,
+        builder: (_) => _ImagePreviewDialog(imagePath: imagePath),
+      )
           : null,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(AppStyles.cardRadius),
@@ -1613,17 +1889,17 @@ class _PanoPreviewBox extends StatelessWidget {
               Positioned.fill(
                 child: _hasImage
                     ? Image.file(
-                        File(imagePath),
-                        fit: BoxFit.cover,
-                      )
+                  File(imagePath),
+                  fit: BoxFit.cover,
+                )
                     : Container(
-                        color: AppStyles.accentInactive.withOpacity(0.2),
-                        child: Icon(
-                          Icons.panorama,
-                          color: AppStyles.textSecondary,
-                          size: 24,
-                        ),
-                      ),
+                  color: AppStyles.accentInactive.withOpacity(0.2),
+                  child: Icon(
+                    Icons.panorama,
+                    color: AppStyles.textSecondary,
+                    size: 24,
+                  ),
+                ),
               ),
               Positioned(
                 top: 2,
@@ -1719,7 +1995,9 @@ class _ThumbnailBox extends StatelessWidget {
             allowMultiple: false,
           );
           final p = result?.files.single.path;
-          if (p != null) onPick(p);
+          if (p != null) {
+            onPick(p);
+          }
         },
         borderRadius: BorderRadius.circular(AppStyles.cardRadius),
         child: Container(
@@ -1738,22 +2016,22 @@ class _ThumbnailBox extends StatelessWidget {
                 child: (path.isNotEmpty && File(path).existsSync())
                     ? Image.file(File(path), fit: BoxFit.cover)
                     : Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.panorama,
-                              color: AppStyles.textSecondary,
-                              size: 28,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Upload Thumbnail',
-                              style: TextStyle(color: AppStyles.textSecondary),
-                            ),
-                          ],
-                        ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.panorama,
+                        color: AppStyles.textSecondary,
+                        size: 28,
                       ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Upload Thumbnail',
+                        style: TextStyle(color: AppStyles.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
               ),
               Positioned(
                 right: 8,
@@ -1821,9 +2099,7 @@ class _WhiteButtonState extends State<_WhiteButton> {
   @override
   Widget build(BuildContext context) {
     final bg = widget.isPrimary ? AppStyles.textPrimary : AppStyles.surface;
-
     final fg = widget.isPrimary ? AppStyles.surface : AppStyles.textPrimary;
-
     final border = Border.all(
       color: widget.isPrimary ? AppStyles.textPrimary : AppStyles.border,
       width: AppStyles.borderWidth,
@@ -1848,12 +2124,12 @@ class _WhiteButtonState extends State<_WhiteButton> {
             border: border,
             boxShadow: widget.isPrimary && _hover
                 ? [
-                    BoxShadow(
-                      color: AppStyles.textPrimary.withOpacity(0.2),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    )
-                  ]
+              BoxShadow(
+                color: AppStyles.textPrimary.withOpacity(0.2),
+                blurRadius: 8,
+                offset: const Offset(0, 4),
+              )
+            ]
                 : null,
           ),
           child: Row(
@@ -1889,12 +2165,12 @@ class _HouseSnapshot {
   });
 
   static _HouseSnapshot capture(
-    String title,
-    String address,
-    String area,
-    String thumb,
-    List<FloorEditor> floors,
-  ) {
+      String title,
+      String address,
+      String area,
+      String thumb,
+      List<FloorEditor> floors,
+      ) {
     final copiedFloors = floors.map((f) => f.deepCopy()).toList();
     return _HouseSnapshot(
       title: title,
@@ -1906,12 +2182,12 @@ class _HouseSnapshot {
   }
 
   void restoreInto(
-    TextEditingController titleCtrl,
-    TextEditingController addressCtrl,
-    TextEditingController areaCtrl,
-    ValueChanged<String> setThumb,
-    List<FloorEditor> targetFloors,
-  ) {
+      TextEditingController titleCtrl,
+      TextEditingController addressCtrl,
+      TextEditingController areaCtrl,
+      ValueChanged<String> setThumb,
+      List<FloorEditor> targetFloors,
+      ) {
     titleCtrl.text = title;
     addressCtrl.text = address;
     areaCtrl.text = area;

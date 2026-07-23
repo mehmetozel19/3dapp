@@ -3,7 +3,7 @@
     <uses-permission android:name="android.permission.INTERNET"/>
 
     <application
-        android:label="p2"
+        android:label="3D Ausqa"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

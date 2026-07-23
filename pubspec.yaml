@@ -18,6 +18,13 @@ dependencies:
   firebase_core: ^4.11.0
   firebase_auth: ^6.5.3
   google_sign_in: 6.1.0
+  tflite_flutter: ^0.12.1
+  image: ^4.8.0
+  lottie: ^3.3.3
+  flutter_map: ^8.3.1
+  latlong2: ^0.10.1
+  geocoding: ^5.0.0
+  flutter_launcher_icons: ^0.13.1 # Veya güncel sürüm
 
 dev_dependencies:
   flutter_test:
@@ -30,3 +37,9 @@ flutter:
 
   assets:
     - assets/images/
+    - assets/animations/
+    - assets/room_model.tflite
+flutter_icons:
+  image_path: "assets/icon.png" # İkon olarak kullanmak istediğiniz ana görselin yolu
+  android: true
+  ios: true

@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:lottie/lottie.dart';
 import '../constants/colors.dart';
 import '../services/auth_service.dart';
 import 'home_screen.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
   @override
   _LoginScreenState createState() => _LoginScreenState();
 }
@@ -15,13 +18,15 @@ class _LoginScreenState extends State<LoginScreen> {
   final AuthService _authService = AuthService();
   bool _isLoading = false;
 
+  static const Color _backgroundColor = Color(0xFFF1F1F1);
+
   void _showError(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
   }
 
-  // TEST MODE FOR EMAIL LOGIN: Bypasses authentication check instantly
   void _handleEmailLogin() {
     Navigator.pushReplacement(
       context,
@@ -29,18 +34,18 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  // ORIGINAL FIREBASE GOOGLE SIGN-IN
   void _handleGoogleLogin() async {
     setState(() => _isLoading = true);
     var user = await _authService.signInWithGoogle();
-    // var user = null; // Placeholder for testing without Firebase
-    setState(() => _isLoading = false);
+    if (mounted) setState(() => _isLoading = false);
 
     if (user != null) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => HomeScreen()),
-      );
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => HomeScreen()),
+        );
+      }
     } else {
       _showError('Google Sign-In failed or cancelled');
     }
@@ -56,7 +61,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
+      backgroundColor: _backgroundColor,
       body: SafeArea(
         child: _isLoading
             ? const Center(child: CircularProgressIndicator(color: AppColors.primaryDark))
@@ -65,62 +70,35 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                height: 180,
-                width: 180,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Image.asset(
-                  'assets/images/logo3d.png',
-                  fit: BoxFit.contain,
-                  errorBuilder: (context, error, stackTrace) => const Icon(Icons.home_work_outlined, size: 80, color: AppColors.primaryDark),
-                ),
+              SizedBox(
+                height: 200,
+                width: 200,
+                child: Lottie.asset('assets/animations/intro.json', repeat: true, animate: true),
               ),
+              const SizedBox(height: 20),
+              const Text('3D Ausqa', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primaryDark)),
               const SizedBox(height: 40),
-
-              const Text(
-                'Welcome Back',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primaryDark,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Please sign in to continue your journey',
-                style: TextStyle(color: Colors.grey[600], fontSize: 14),
-              ),
-              const SizedBox(height: 40),
-
               TextField(
                 controller: _emailController,
-                keyboardType: TextInputType.emailAddress,
                 decoration: InputDecoration(
                   labelText: 'Email Address',
                   prefixIcon: const Icon(Icons.email_outlined, color: AppColors.primaryDark),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
               const SizedBox(height: 20),
-
               TextField(
                 controller: _passwordController,
                 obscureText: true,
                 decoration: InputDecoration(
                   labelText: 'Password',
                   prefixIcon: const Icon(Icons.lock_outline, color: AppColors.primaryDark),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
               const SizedBox(height: 30),
 
-              // SIGN IN BUTTON (Instantly enters the app for quick testing)
+              // Email ile Giriş Butonu
               SizedBox(
                 width: double.infinity,
                 height: 55,
@@ -128,94 +106,38 @@ class _LoginScreenState extends State<LoginScreen> {
                   onPressed: _handleEmailLogin,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.accentYellow,
-                    foregroundColor: AppColors.primaryDark,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 2,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
-                  child: const Text(
-                    'Sign In',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // Navigate to Sign Up Screen
-              TextButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const RegisterScreen()),
-                  );
-                },
-                child: const Text(
-                  "Don't have an account? Sign Up",
-                  style: TextStyle(
-                    color: AppColors.primaryDark,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
+                  child: const Text('Sign In', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 ),
               ),
 
               const SizedBox(height: 15),
 
-              Row(
-                children: [
-                  Expanded(child: Divider(color: Colors.grey[300], thickness: 1)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 15),
-                    child: Text(
-                      'OR',
-                      style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.w500),
-                    ),
-                  ),
-                  Expanded(child: Divider(color: Colors.grey[300], thickness: 1)),
-                ],
-              ),
-
-              const SizedBox(height: 25),
-
-              // CONTINUE WITH GOOGLE BUTTON (Authenticates via Firebase)
+              // Google ile Giriş Butonu (glogo.png kullanılarak)
               SizedBox(
                 width: double.infinity,
                 height: 55,
                 child: OutlinedButton(
                   onPressed: _handleGoogleLogin,
                   style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: AppColors.primaryDark, width: 1.5),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    backgroundColor: Colors.white,
-                    elevation: 0,
+                    side: const BorderSide(color: AppColors.primaryDark),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Image.asset(
-                        'assets/images/glogo.png',
-                        height: 22,
-                        errorBuilder: (context, error, stackTrace) => const Icon(Icons.g_mobiledata, size: 30, color: AppColors.primaryDark),
-                      ),
-                      const SizedBox(width: 15),
-                      const Text(
-                        'Continue with Google',
-                        style: TextStyle(
-                          color: AppColors.primaryDark,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
+                      Image.asset('assets/images/glogo.png', height: 24, width: 24),
+                      const SizedBox(width: 12),
+                      const Text('Continue with Google', style: TextStyle(fontSize: 16, color: AppColors.primaryDark, fontWeight: FontWeight.bold)),
                     ],
                   ),
                 ),
+              ),
+
+              TextButton(
+                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const RegisterScreen())),
+                child: const Text("Don't have an account? Sign Up", style: TextStyle(color: AppColors.primaryDark)),
               ),
             ],
           ),
